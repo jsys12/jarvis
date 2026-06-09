@@ -4,8 +4,9 @@ import logging
 import os
 import winreg
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from pathlib import Path
+
+from jarvis.matching import match_score
 
 log = logging.getLogger("jarvis.apps")
 
@@ -93,19 +94,11 @@ def build_apps(config: dict) -> list[App]:
 def find_app(apps: list[App], target: str) -> App | None:
     """Лучшее совпадение цели с псевдонимами приложений (точное/вхождение/нечёткое)."""
     best, best_score = None, 0.0
-    joined = target.replace(" ", "")  # «с тем» -> «стем» (частая ошибка распознавания)
     for app in apps:
         for alias in app.aliases:
             if target == alias:
                 return app
-            score = 0.0
-            if alias in target or (len(target) >= 3 and target in alias):
-                score = 0.9
-            score = max(
-                score,
-                SequenceMatcher(None, target, alias).ratio(),
-                SequenceMatcher(None, joined, alias.replace(" ", "")).ratio(),
-            )
+            score = match_score(target, alias)
             if score > best_score:
                 best, best_score = app, score
     if best_score >= 0.75:

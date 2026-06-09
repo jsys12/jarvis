@@ -16,7 +16,11 @@ sys.path.insert(0, str(BASE))
 from vosk import KaldiRecognizer, Model, SetLogLevel  # noqa: E402
 
 from jarvis.apps import build_apps, find_app  # noqa: E402
-from jarvis.intents import IntentHandler, _is_close_verb, _is_open_verb, normalize  # noqa: E402
+from jarvis.installed import find_installed, scan_start_menu  # noqa: E402
+from jarvis.intents import (IntentHandler, _is_close_verb, _is_open_verb,  # noqa: E402
+                            normalize, parse_search)
+from jarvis.matching import match_score  # noqa: E402
+from jarvis.actions import find_process, spoken_domain  # noqa: E402
 from jarvis.tts import Speaker  # noqa: E402
 
 PHRASES = [
@@ -76,6 +80,44 @@ def main() -> None:
     handler = IntentHandler({"custom_commands": []}, apps)
     for q in ["сколько времени", "какое сегодня число", "кто ты", "как дела"]:
         print(f"[..] {q!r} -> {handler._small_talk(normalize(q))!r}")
+
+    # Разбор поисковых запросов (чистая функция, без открытия браузера)
+    for q, expected in [
+        ("найди рецепт борща", ("google", "рецепт борща")),
+        ("поищи на ютубе лофи музыку", ("youtube", "лофи музыку")),
+        ("найди котиков в ютубе", ("youtube", "котиков")),
+        ("открой гугл с поиском погода в хельсинки", ("google", "погода в хельсинки")),
+        ("открой ютуб с поиском обзор дота два", ("youtube", "обзор дота два")),
+        ("загугли что такое vosk", ("google", "что такое vosk")),
+    ]:
+        res = parse_search(normalize(q))
+        got = (res[0], res[2]) if res else None
+        ok = got == expected
+        print(f"[{'OK' if ok else '!!'}] поиск: {q!r} -> {got}")
+        failed += 0 if ok else 1
+
+    # Транслит-сопоставление (русская речь -> латинские названия)
+    for spoken, candidate in [("обс", "OBS Studio"), ("дискорд", "Discord"),
+                              ("телеграм", "Telegram Desktop"), ("стим", "Steam"),
+                              ("блендер", "Blender"), ("гит хаб десктоп", "GitHub Desktop")]:
+        score = match_score(spoken, candidate)
+        ok = score >= 0.75
+        print(f"[{'OK' if ok else '!!'}] транслит: {spoken!r} ~ {candidate!r} = {score:.2f}")
+        failed += 0 if ok else 1
+
+    # Продиктованный домен
+    dom = spoken_domain("хабр точка ру")
+    ok = dom == "https://habr.ru"
+    print(f"[{'OK' if ok else '!!'}] домен: 'хабр точка ру' -> {dom}")
+    failed += 0 if ok else 1
+
+    # Живой индекс меню «Пуск» и процессы (информативно, зависит от машины)
+    index = scan_start_menu()
+    print(f"[..] меню «Пуск»: {len(index)} программ")
+    for spoken in ["обс", "телеграм", "клод"]:
+        hit = find_installed(index, spoken)
+        print(f"[..] установлено: {spoken!r} -> {hit[0] if hit else None}")
+    print(f"[..] процесс 'хром' -> {find_process('хром')}")
 
     print("\nИтог:", "ВСЁ ОК" if failed == 0 else f"ОШИБОК: {failed}")
     sys.exit(1 if failed else 0)

@@ -3,11 +3,16 @@
 import datetime
 import logging
 import os
+import re
+import socket
 import subprocess
 import webbrowser
 from pathlib import Path
+from urllib.parse import quote_plus
 
 from PIL import ImageGrab
+
+from jarvis.matching import match_score, translit
 
 log = logging.getLogger("jarvis.actions")
 
@@ -69,5 +74,96 @@ def take_screenshot() -> Path:
     return path
 
 
+SEARCH_URLS = {
+    "google": "https://www.google.com/search?q={}",
+    "youtube": "https://www.youtube.com/results?search_query={}",
+    "wiki": "https://ru.wikipedia.org/w/index.php?search={}",
+}
+
+
+def open_search(engine: str, query: str) -> None:
+    open_url(SEARCH_URLS.get(engine, SEARCH_URLS["google"]).format(quote_plus(query)))
+
+
 def google_search(query: str) -> None:
-    open_url("https://www.google.com/search?q=" + query.replace(" ", "+"))
+    open_search("google", query)
+
+
+def open_path(path) -> None:
+    log.info("Открываю: %s", path)
+    os.startfile(path)
+
+
+# --- произвольные сайты ---------------------------------------------------
+
+_TLD_WORDS = {"ру": "ru", "ком": "com", "орг": "org", "нет": "net",
+              "ио": "io", "рф": "xn--p1ai", "точка": ""}
+
+
+def spoken_domain(spoken: str) -> str | None:
+    """«хабр точка ру» -> https://habr.ru (домен, продиктованный через «точка»)."""
+    if "точка" not in spoken:
+        return None
+    parts = [p.strip() for p in spoken.split("точка") if p.strip()]
+    if len(parts) < 2:
+        return None
+    tld = _TLD_WORDS.get(parts[-1], translit(parts[-1].replace(" ", "")))
+    host = ".".join(translit(p.replace(" ", "")) for p in parts[:-1]) + "." + tld
+    if re.fullmatch(r"[a-z0-9.\-]+\.[a-z0-9\-]{2,}", host):
+        return "https://" + host
+    return None
+
+
+def guess_site(spoken: str) -> str | None:
+    """Пробует превратить «хабр» в живой домен: habr.ru / habr.com / ..."""
+    base = translit(spoken.replace(" ", "").replace("-", ""))
+    if not re.fullmatch(r"[a-z0-9]{2,30}", base):
+        return None
+    for tld in (".ru", ".com", ".net", ".org", ".io"):
+        host = base + tld
+        try:
+            socket.getaddrinfo(host, 443)
+            log.info("Сайт угадан: %r -> %s", spoken, host)
+            return "https://" + host
+        except OSError:
+            continue
+    return None
+
+
+# --- закрытие произвольных программ ----------------------------------------
+
+# Эти процессы нельзя убивать ни при каком совпадении
+_KILL_BLACKLIST = {"system", "svchost", "csrss", "winlogon", "wininit", "services",
+                   "lsass", "dwm", "smss", "fontdrvhost", "registry", "idle",
+                   "explorer", "python", "pythonw", "conhost", "audiodg"}
+
+
+def list_processes() -> set[str]:
+    res = subprocess.run(
+        ["tasklist", "/FO", "CSV", "/NH"],
+        capture_output=True, text=True, encoding="cp866",
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    names = set()
+    for line in res.stdout.splitlines():
+        if line.startswith('"'):
+            names.add(line.split('","')[0].strip('"'))
+    return names
+
+
+def find_process(target: str, threshold: float = 0.8) -> str | None:
+    """Имя exe запущенного процесса, лучше всего похожего на сказанное."""
+    best_exe, best_score = None, 0.0
+    for exe in list_processes():
+        base = exe.lower().removesuffix(".exe")
+        if base in _KILL_BLACKLIST:
+            continue
+        clean = re.sub(r"\d+$", "", base)  # obs64 -> obs
+        score = max(match_score(target, base), match_score(target, clean))
+        if score > best_score:
+            best_exe, best_score = exe, score
+    if best_score >= threshold:
+        log.info("Процесс: %r -> %s (score %.2f)", target, best_exe, best_score)
+        return best_exe
+    log.info("Процесс для %r не найден (лучший score %.2f, %r)", target, best_score, best_exe)
+    return None
