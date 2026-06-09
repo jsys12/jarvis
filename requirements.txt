@@ -1,0 +1,10 @@
+vosk>=0.3.45
+sounddevice>=0.5
+pystray>=0.19
+Pillow>=10
+pyttsx3>=2.99
+winrt-runtime>=3.2
+winrt-Windows.Foundation>=3.2
+winrt-Windows.Foundation.Collections>=3.2
+winrt-Windows.Media.SpeechSynthesis>=3.2
+winrt-Windows.Storage.Streams>=3.2

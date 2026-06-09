@@ -1,0 +1,15 @@
+{
+  "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес"],
+  "voice": "Pavel",
+  "sample_rate": 16000,
+  "input_device": null,
+  "command_window_sec": 8,
+  "app_paths": {},
+  "custom_commands": [
+    {
+      "phrases": ["запусти игру", "врубай катку"],
+      "action": "steam://rungameid/570",
+      "reply": "Запускаю Доту. Удачной игры."
+    }
+  ]
+}
