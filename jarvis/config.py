@@ -7,8 +7,10 @@ from pathlib import Path
 log = logging.getLogger("jarvis.config")
 
 DEFAULT_CONFIG = {
-    # Варианты, в которые распознавание чаще всего превращает слово «Джарвис»
-    "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес", "jarvis"],
+    # Имя + варианты, в которые его превращает распознавание.
+    # Подбор нового имени: python scripts/wakebench.py
+    "wake_words": ["феникс", "финикс", "феникса", "fenix", "phoenix",
+                   "джарвис", "jarvis"],
     "voice": "Pavel",
     "sample_rate": 16000,
     # null — микрофон по умолчанию; иначе индекс устройства из sounddevice

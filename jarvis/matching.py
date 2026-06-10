@@ -24,6 +24,16 @@ def translit(text: str) -> str:
     return "".join(_RU_LAT.get(ch, ch) for ch in text)
 
 
+def wake_score(token: str, wake_word: str) -> float:
+    """Строгая похожесть для wake-слова: только полный ratio (с транслитом),
+    без бонусов за подстроку/слова — иначе «фен» будил бы «феникса»."""
+    return max(
+        SequenceMatcher(None, a, b).ratio()
+        for a in {token, translit(token)}
+        for b in {wake_word, translit(wake_word)}
+    )
+
+
 def _skeleton(s: str) -> str:
     """Согласный скелет: stim/steam -> stm. Гласные между языками плавают,
     согласные при транслитерации сохраняются."""

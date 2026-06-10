@@ -6,7 +6,7 @@ import random
 import re
 from difflib import SequenceMatcher
 
-from jarvis import __version__, actions
+from jarvis import APP_NAME, __version__, actions
 from jarvis.apps import find_app
 from jarvis.installed import find_installed, scan_start_menu
 
@@ -243,7 +243,7 @@ class IntentHandler:
                 "В полном порядке, спасибо.",
             ])
         if any(p in cmd for p in ("кто ты", "ты кто", "представься", "как тебя зовут")):
-            return f"Я Джарвис, локальный голосовой ассистент, версия {__version__}."
+            return f"Я {APP_NAME}, локальный голосовой ассистент, версия {__version__}."
         if any(p in cmd for p in ("что ты умеешь", "помощь", "что умеешь", "команды")):
             return ("Я умею открывать и закрывать приложения и сайты, делать скриншоты, "
                     "искать в интернете и отвечать на простые вопросы. "

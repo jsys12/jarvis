@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-from jarvis.matching import match_score
+from jarvis.matching import wake_score
 
 from jarvis import APP_NAME, __version__
 from jarvis.apps import build_apps
@@ -19,6 +19,7 @@ from jarvis.tts import Speaker
 log = logging.getLogger("jarvis")
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+_REJECT = object()  # сигнал «ложное срабатывание, команду не выполнять»
 
 
 class Jarvis:
@@ -74,20 +75,27 @@ class Jarvis:
         # Vosk разбудил — точную расшифровку команды даёт Whisper
         if self.whisper is not None and audio:
             refined = self._refine(audio, awaiting)
+            if refined is _REJECT:
+                log.info("Whisper не подтвердил wake-слово — игнорирую (ложное срабатывание)")
+                return
             if refined:
                 cmd = refined
         self._awaiting_until = 0.0
         self.say(self.handler.handle(cmd))
 
-    def _refine(self, audio: bytes, awaiting: bool) -> str | None:
-        """Пере-распознаёт фразу Whisper'ом и убирает из неё wake-слово."""
+    def _refine(self, audio: bytes, awaiting: bool):
+        """Пере-распознаёт фразу Whisper'ом и убирает из неё wake-слово.
+
+        Возвращает команду, None (использовать текст Vosk) или _REJECT —
+        Whisper не услышал ничего похожего на имя, значит Vosk разбудился зря.
+        """
         try:
             text = normalize(self.whisper.transcribe(audio))
         except Exception:
             log.exception("Whisper не справился, использую текст Vosk")
             return None
         if not text:
-            return None
+            return _REJECT  # Vosk что-то слышал, Whisper (с VAD) — тишину
         tokens = text.split()
         for i, tok in enumerate(tokens):
             if self._is_wake(tok):
@@ -95,10 +103,10 @@ class Jarvis:
         if awaiting:
             return text  # окно после «Слушаю» — wake-слова и не должно быть
         # Vosk слышал wake-слово, а Whisper расслышал его иначе —
-        # отбрасываем первый токен, если он похож на огрызок имени
-        if tokens and match_score(tokens[0], self._wake_words[0]) >= 0.5:
+        # принимаем, только если первый токен хотя бы отдалённо похож на имя
+        if tokens and wake_score(tokens[0], self._wake_words[0]) >= 0.5:
             return " ".join(tokens[1:])
-        return text
+        return _REJECT
 
     def _extract_command(self, text: str) -> str | None:
         """Команда после wake-слова, '' если только wake-слово, None если его нет."""
@@ -111,9 +119,10 @@ class Jarvis:
         return None
 
     def _is_wake(self, token: str) -> bool:
-        # match_score транслитерирует: ловит и «джарвиз», и латинское «jarvis»
+        # wake_score транслитерирует (ловит «финикс», латинское «fenix»),
+        # но без бонуса за подстроку — «фен» будить не должен
         return token in self._wake_words or any(
-            match_score(token, w) >= 0.8 for w in self._wake_words
+            wake_score(token, w) >= 0.8 for w in self._wake_words
         )
 
 
@@ -154,7 +163,7 @@ def main() -> None:
 
     worker = threading.Thread(target=jarvis.run_loop, daemon=True, name="jarvis-listener")
     worker.start()
-    jarvis.say("Джарвис запущен и готов к работе.")
+    jarvis.say(f"{APP_NAME} запущен и готов к работе.")
 
     tray = build_tray(jarvis)
     tray.run()  # блокирует до «Выход»

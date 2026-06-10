@@ -24,10 +24,10 @@ from jarvis.actions import find_process, spoken_domain  # noqa: E402
 from jarvis.tts import Speaker  # noqa: E402
 
 PHRASES = [
-    "джарвис открой стим",
-    "джарвис закрой дискорд",
-    "джарвис сколько времени",
-    "джарвис открой ютуб",
+    "феникс открой стим",
+    "феникс закрой дискорд",
+    "феникс сколько времени",
+    "феникс открой ютуб",
 ]
 
 
@@ -51,7 +51,7 @@ def main() -> None:
     assert speaker._mode == "winrt", "Pavel/WinRT недоступен"
     model = Model(str(BASE / "models" / "vosk-model-small-ru-0.22"))
     apps = build_apps({})
-    wake = ["джарвис", "жарвис", "джервис", "джарвиз"]
+    wake = ["феникс", "финикс", "феникса"]
 
     failed = 0
     for phrase in PHRASES:
@@ -79,10 +79,15 @@ def main() -> None:
         print(f"[{'OK' if ok else '!!'}] глагол: {tok!r} -> {fn(tok)}")
         failed += 0 if ok else 1
 
-    # Латинское wake-слово от Whisper («Jarvis открой VSCode»)
-    ok = match_score("jarvis", "джарвис") >= 0.8
-    print(f"[{'OK' if ok else '!!'}] wake латиницей: jarvis ~ джарвис = {match_score('jarvis', 'джарвис'):.2f}")
-    failed += 0 if ok else 1
+    # Wake-матчер: ловит варианты имени, не ловит созвучные обычные слова
+    from jarvis.matching import wake_score
+    for tok, w, exp in [("jarvis", "джарвис", True), ("финикс", "феникс", True),
+                        ("феникса", "феникс", True), ("фен", "феникс", False),
+                        ("финиш", "феникс", False), ("техникс", "феникс", False)]:
+        score = wake_score(tok, w)
+        ok = (score >= 0.8) == exp
+        print(f"[{'OK' if ok else '!!'}] wake: {tok!r} ~ {w!r} = {score:.2f} (ожидалось {'да' if exp else 'нет'})")
+        failed += 0 if ok else 1
 
     # Разбор целей без запуска приложений
     for target, expected in [("стим", "steam"), ("дискорд", "discord"),
@@ -145,8 +150,8 @@ def main() -> None:
 
     # Whisper: точная расшифровка фразы, на которой Vosk ошибался
     import time as _t
-    for phrase in ["джарвис открой на ютубе видео котиков", "джарвис открой дискорд",
-                   "джарвис закрой яндекс музыку"]:
+    for phrase in ["феникс открой на ютубе видео котиков", "феникс открой дискорд",
+                   "феникс закрой яндекс музыку"]:
         wav_bytes = asyncio.run(speaker._synthesize(phrase))
         wf = wave.open(io.BytesIO(wav_bytes))
         pcm = wf.readframes(wf.getnframes())

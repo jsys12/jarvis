@@ -1,5 +1,5 @@
 {
-  "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес", "jarvis"],
+  "wake_words": ["феникс", "финикс", "феникса", "fenix", "phoenix", "джарвис", "jarvis"],
   "voice": "Pavel",
   "sample_rate": 16000,
   "input_device": null,
