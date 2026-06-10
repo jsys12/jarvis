@@ -76,6 +76,12 @@ def build_apps(config: dict) -> list[App]:
             [("exe", _expand(r"%LOCALAPPDATA%\AnthropicClaude\claude.exe"))],
             ["claude.exe"],
         ),
+        App(
+            "vscode", "Вэ Эс Код",
+            ["вс код", "вэ эс код", "в эс код", "вес код", "vs code", "vscode", "вс-код"],
+            [("exe", _expand(r"%LOCALAPPDATA%\Programs\Microsoft VS Code\Code.exe"))],
+            ["Code.exe"],
+        ),
         App("calc", "Калькулятор", ["калькулятор"], [("uri", "calc:")], ["CalculatorApp.exe", "Calculator.exe"]),
         App("notepad", "Блокнот", ["блокнот"], [("cmd", ["notepad.exe"])], ["notepad.exe", "Notepad.exe"]),
         App("explorer", "Проводник", ["проводник", "папку", "файлы"], [("cmd", ["explorer.exe"])]),

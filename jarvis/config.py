@@ -7,18 +7,20 @@ from pathlib import Path
 log = logging.getLogger("jarvis.config")
 
 DEFAULT_CONFIG = {
-    # Варианты, в которые Vosk чаще всего превращает слово «Джарвис»
-    "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес"],
+    # Варианты, в которые распознавание чаще всего превращает слово «Джарвис»
+    "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес", "jarvis"],
     "voice": "Pavel",
     "sample_rate": 16000,
     # null — микрофон по умолчанию; иначе индекс устройства из sounddevice
     "input_device": None,
     # Сколько секунд ждать команду после отклика «Слушаю»
     "command_window_sec": 8,
-    # Whisper уточняет команду после wake-слова (точнее, но ест ~600 МБ ОЗУ).
-    # Модели: tiny / base / small (рекомендуется) / medium
+    # Whisper уточняет команду после wake-слова.
+    # device: auto (GPU при наличии CUDA, иначе CPU) / cuda / cpu
+    # model: auto (GPU -> large-v3-turbo, CPU -> small) или имя модели
     "use_whisper": True,
-    "whisper_model": "small",
+    "whisper_model": "auto",
+    "whisper_device": "auto",
     # Переопределение путей встроенных приложений: {"discord": "C:\\...\\Discord.exe"}
     "app_paths": {},
     # Свои команды: фразы -> действие (путь к exe, ссылка или steam-URI)

@@ -3,8 +3,9 @@
 import logging
 import threading
 import time
-from difflib import SequenceMatcher
 from pathlib import Path
+
+from jarvis.matching import match_score
 
 from jarvis import APP_NAME, __version__
 from jarvis.apps import build_apps
@@ -95,7 +96,7 @@ class Jarvis:
             return text  # окно после «Слушаю» — wake-слова и не должно быть
         # Vosk слышал wake-слово, а Whisper расслышал его иначе —
         # отбрасываем первый токен, если он похож на огрызок имени
-        if tokens and SequenceMatcher(None, tokens[0], self._wake_words[0]).ratio() >= 0.5:
+        if tokens and match_score(tokens[0], self._wake_words[0]) >= 0.5:
             return " ".join(tokens[1:])
         return text
 
@@ -110,8 +111,9 @@ class Jarvis:
         return None
 
     def _is_wake(self, token: str) -> bool:
+        # match_score транслитерирует: ловит и «джарвиз», и латинское «jarvis»
         return token in self._wake_words or any(
-            SequenceMatcher(None, token, w).ratio() >= 0.8 for w in self._wake_words
+            match_score(token, w) >= 0.8 for w in self._wake_words
         )
 
 
@@ -139,7 +141,9 @@ def main() -> None:
         try:
             from jarvis.stt import WhisperTranscriber
 
-            whisper = WhisperTranscriber(config.get("whisper_model", "small"))
+            whisper = WhisperTranscriber(
+                config.get("whisper_model", "auto"), config.get("whisper_device", "auto")
+            )
         except Exception:
             log.exception("Whisper не завёлся, работаю только на Vosk")
 

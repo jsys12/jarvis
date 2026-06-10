@@ -2,9 +2,10 @@
 
 Локальный голосовой ассистент для Windows. Полностью офлайн, гибридное распознавание:
 [Vosk](https://alphacephei.com/vosk/) (`vosk-model-small-ru`, ~45 МБ) непрерывно слушает
-и ловит wake-слово, а команду точно расшифровывает **Whisper** (faster-whisper `small`,
-int8, CPU, ~460 МБ). Синтез — системный мужской голос Microsoft Pavel (WinRT/OneCore).
-Живёт в системном трее.
+и ловит wake-слово, а команду точно расшифровывает **Whisper**. На машине с NVIDIA
+автоматически берётся `large-v3-turbo` на GPU (int8_float16, ~1.5 ГБ VRAM,
+~0.3–0.5 с на команду), без GPU — `small` на CPU. Синтез — системный мужской голос
+Microsoft Pavel (WinRT/OneCore). Живёт в системном трее.
 
 ## Возможности
 
@@ -69,15 +70,17 @@ python -m jarvis
 | Компонент | Решение |
 |---|---|
 | Wake-слово (стриминг) | Vosk (Kaldi), модель `vosk-model-small-ru-0.22` |
-| Расшифровка команды | faster-whisper (CTranslate2, int8, CPU), модель `small`; отключается `use_whisper: false` |
+| Расшифровка команды | faster-whisper (CTranslate2): GPU → `large-v3-turbo` int8_float16, CPU → `small` int8; `whisper_device`/`whisper_model` в конфиге, отключается `use_whisper: false` |
+| GPU | CUDA-библиотеки из pip (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`), системная CUDA не нужна |
 | Синтез речи | WinRT `Windows.Media.SpeechSynthesis`, голос Microsoft Pavel; фолбэк — SAPI/Ирина |
 | Микрофон | sounddevice (PortAudio) |
 | Трей | pystray + Pillow |
 
 Всё работает локально, интернет нужен только для первого скачивания моделей.
-Whisper точнее на порядок (Vosk «открой на ютубе видео котиков» слышит как кашу,
-Whisper — дословно), стоит ~600 МБ ОЗУ и ~2 секунды на команду. На слабой машине
-можно поставить `"whisper_model": "base"` или выключить совсем.
+Если GPU не завёлся — в логе будет причина и автоматический откат на CPU.
 
-Важно для разработчиков: модель Whisper (CTranslate2) должна загружаться **до**
-первого вызова WinRT-синтеза, иначе процесс падает с access violation.
+Важно для разработчиков:
+- модель Whisper (CTranslate2) должна загружаться **до** первого вызова
+  WinRT-синтеза, иначе процесс падает с access violation;
+- ctranslate2 ищет `cublas64_12.dll` через `PATH` — `os.add_dll_directory`
+  ему недостаточно (делается автоматически в `stt._enable_cuda_dlls`).

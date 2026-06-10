@@ -46,7 +46,7 @@ def main() -> None:
     SetLogLevel(-1)
     # Whisper — строго до первого использования WinRT (иначе access violation)
     from jarvis.stt import WhisperTranscriber
-    whisper = WhisperTranscriber("small")
+    whisper = WhisperTranscriber("auto", "auto")
     speaker = Speaker("Pavel")
     assert speaker._mode == "winrt", "Pavel/WinRT недоступен"
     model = Model(str(BASE / "models" / "vosk-model-small-ru-0.22"))
@@ -71,9 +71,23 @@ def main() -> None:
         if not woke:
             failed += 1
 
+    # Глагольные формы (Whisper меняет форму: «закрой» -> «закроет»)
+    for tok, fn, exp in [("закроет", _is_close_verb, True), ("открою", _is_open_verb, True),
+                         ("откройте", _is_open_verb, True), ("выключи", _is_close_verb, True),
+                         ("включи", _is_open_verb, True), ("скриншот", _is_open_verb, False)]:
+        ok = fn(tok) == exp
+        print(f"[{'OK' if ok else '!!'}] глагол: {tok!r} -> {fn(tok)}")
+        failed += 0 if ok else 1
+
+    # Латинское wake-слово от Whisper («Jarvis открой VSCode»)
+    ok = match_score("jarvis", "джарвис") >= 0.8
+    print(f"[{'OK' if ok else '!!'}] wake латиницей: jarvis ~ джарвис = {match_score('jarvis', 'джарвис'):.2f}")
+    failed += 0 if ok else 1
+
     # Разбор целей без запуска приложений
     for target, expected in [("стим", "steam"), ("дискорд", "discord"),
-                             ("доту", "dota2"), ("телегу", "telegram"), ("клауд", "claude")]:
+                             ("доту", "dota2"), ("телегу", "telegram"), ("клауд", "claude"),
+                             ("вс код", "vscode"), ("vscode", "vscode")]:
         app = find_app(apps, target)
         ok = app is not None and app.key == expected
         print(f"[{'OK' if ok else '!!'}] цель {target!r} -> {app.key if app else None}")
@@ -131,14 +145,15 @@ def main() -> None:
 
     # Whisper: точная расшифровка фразы, на которой Vosk ошибался
     import time as _t
-    for phrase in ["джарвис открой на ютубе видео котиков", "джарвис открой дискорд"]:
+    for phrase in ["джарвис открой на ютубе видео котиков", "джарвис открой дискорд",
+                   "джарвис закрой яндекс музыку"]:
         wav_bytes = asyncio.run(speaker._synthesize(phrase))
         wf = wave.open(io.BytesIO(wav_bytes))
         pcm = wf.readframes(wf.getnframes())
         t0 = _t.time()
         heard = normalize(whisper.transcribe(pcm, wf.getframerate()))
         dt = _t.time() - t0
-        ok = any(w in heard for w in ("ютуб", "дискорд", "discord"))
+        ok = any(w in heard for w in ("ютуб", "дискорд", "discord", "яндекс музыку"))
         print(f"[{'OK' if ok else '!!'}] whisper ({dt:.1f}с): {phrase!r} -> {heard!r}")
         failed += 0 if ok else 1
 

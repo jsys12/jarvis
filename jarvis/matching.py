@@ -7,17 +7,21 @@ Vosk выдаёт только кириллицу («обс студио»), а 
 import re
 from difflib import SequenceMatcher
 
+_RU_DIGRAPHS = {"дж": "j"}  # фонетика: «джарвис» -> jarvis, а не dzharvis
 _RU_LAT = {
-    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ж": "zh",
-    "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m", "н": "n",
-    "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
-    "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch", "ъ": "",
-    "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "e",
+    "ж": "zh", "з": "z", "и": "i", "й": "y", "к": "k", "л": "l", "м": "m",
+    "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u",
+    "ф": "f", "х": "h", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "sch",
+    "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu", "я": "ya",
 }
 
 
 def translit(text: str) -> str:
-    return "".join(_RU_LAT.get(ch, ch) for ch in text.lower())
+    text = text.lower()
+    for ru, lat in _RU_DIGRAPHS.items():
+        text = text.replace(ru, lat)
+    return "".join(_RU_LAT.get(ch, ch) for ch in text)
 
 
 def _skeleton(s: str) -> str:

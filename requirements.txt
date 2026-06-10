@@ -1,5 +1,9 @@
 vosk>=0.3.45
 faster-whisper>=1.2
+# Для GPU (NVIDIA): CUDA-библиотеки ставятся pip'ом, системная CUDA не нужна.
+# На машине без NVIDIA эти две строки можно удалить — Whisper уйдёт на CPU.
+nvidia-cublas-cu12
+nvidia-cudnn-cu12
 sounddevice>=0.5
 pystray>=0.19
 Pillow>=10

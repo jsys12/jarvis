@@ -1,11 +1,12 @@
 {
-  "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес"],
+  "wake_words": ["джарвис", "жарвис", "джервис", "джарвиз", "ярвис", "джарвес", "jarvis"],
   "voice": "Pavel",
   "sample_rate": 16000,
   "input_device": null,
   "command_window_sec": 8,
   "use_whisper": true,
-  "whisper_model": "small",
+  "whisper_model": "auto",
+  "whisper_device": "auto",
   "app_paths": {},
   "custom_commands": [
     {

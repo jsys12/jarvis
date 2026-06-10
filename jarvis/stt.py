@@ -7,6 +7,7 @@
 
 import json
 import logging
+import os
 import queue
 from pathlib import Path
 
@@ -14,6 +15,25 @@ import sounddevice as sd
 from vosk import KaldiRecognizer, Model, SetLogLevel
 
 log = logging.getLogger("jarvis.stt")
+
+# CT2-конверсия large-v3-turbo: на GPU быстрее и точнее, чем small на CPU
+TURBO_MODEL = "deepdml/faster-whisper-large-v3-turbo-ct2"
+
+
+def _enable_cuda_dlls() -> None:
+    """Добавляет cuBLAS/cuDNN из pip-пакетов nvidia-* в PATH.
+
+    ctranslate2 ищет cublas64_12.dll через обычный порядок поиска DLL (PATH),
+    os.add_dll_directory ему недостаточно.
+    """
+    try:
+        import nvidia
+    except ImportError:
+        return
+    base = Path(nvidia.__path__[0])
+    dirs = [str(p) for p in (base / "cublas" / "bin", base / "cudnn" / "bin") if p.exists()]
+    if dirs:
+        os.environ["PATH"] = os.pathsep.join(dirs) + os.pathsep + os.environ["PATH"]
 
 
 class Listener:
@@ -85,12 +105,26 @@ class WhisperTranscriber:
     после использования WinRT роняет процесс (access violation 0xC0000005).
     """
 
-    def __init__(self, model_name: str = "small"):
+    def __init__(self, model_name: str = "auto", device: str = "auto"):
+        _enable_cuda_dlls()
+        import ctranslate2
         from faster_whisper import WhisperModel
 
-        log.info("Загрузка Whisper (%s, int8)... при первом запуске модель скачается", model_name)
-        self._model = WhisperModel(model_name, device="cpu", compute_type="int8")
-        log.info("Whisper готов")
+        if device == "auto":
+            device = "cuda" if ctranslate2.get_cuda_device_count() > 0 else "cpu"
+        if device == "cuda":
+            name = TURBO_MODEL if model_name == "auto" else model_name
+            try:
+                log.info("Загрузка Whisper (%s) на GPU... при первом запуске модель скачается", name)
+                self._model = WhisperModel(name, device="cuda", compute_type="int8_float16")
+                log.info("Whisper готов (GPU)")
+                return
+            except Exception:
+                log.exception("GPU не завёлся, откатываюсь на CPU")
+        name = "small" if model_name == "auto" else model_name
+        log.info("Загрузка Whisper (%s) на CPU...", name)
+        self._model = WhisperModel(name, device="cpu", compute_type="int8")
+        log.info("Whisper готов (CPU)")
 
     def transcribe(self, pcm: bytes, sample_rate: int = 16000) -> str:
         import numpy as np

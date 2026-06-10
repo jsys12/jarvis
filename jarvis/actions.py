@@ -114,6 +114,30 @@ def spoken_domain(spoken: str) -> str | None:
     return None
 
 
+_dns_trust: bool | None = None
+
+
+def _dns_trustworthy() -> bool:
+    """Паркинг/провайдерский DNS «резолвит» любую абракадабру — тогда
+    угадывать домены по DNS бессмысленно и опасно. Проверяем один раз."""
+    global _dns_trust
+    if _dns_trust is None:
+        import random
+        import string
+
+        junk = "".join(random.choices(string.ascii_lowercase, k=16))
+        _dns_trust = True
+        for tld in (".ru", ".com"):
+            try:
+                socket.getaddrinfo(junk + tld, 443)
+                log.warning("DNS отвечает на мусорный домен %s — угадывание сайтов отключено", junk + tld)
+                _dns_trust = False
+                break
+            except OSError:
+                continue
+    return _dns_trust
+
+
 def guess_site(spoken: str) -> str | None:
     """Пробует превратить «хабр» в живой домен: habr.ru / habr.com / ...
 
@@ -124,6 +148,8 @@ def guess_site(spoken: str) -> str | None:
         return None
     base = translit(spoken.replace(" ", "").replace("-", ""))
     if not re.fullmatch(r"[a-z0-9]{2,14}", base):
+        return None
+    if not _dns_trustworthy():
         return None
     for tld in (".ru", ".com", ".net", ".org", ".io"):
         host = base + tld
