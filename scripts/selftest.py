@@ -121,17 +121,24 @@ def main() -> None:
     # Транслит-сопоставление (русская речь -> латинские названия)
     for spoken, candidate in [("обс", "OBS Studio"), ("дискорд", "Discord"),
                               ("телеграм", "Telegram Desktop"), ("стим", "Steam"),
-                              ("блендер", "Blender"), ("гит хаб десктоп", "GitHub Desktop")]:
+                              ("блендер", "Blender"), ("гит хаб десктоп", "GitHub Desktop"),
+                              ("камо студио", "Camo Studio"),
+                              ("роблокс плеер", "roblox player installer"),
+                              ("сабнатика два", "Subnautica 2")]:
         score = match_score(spoken, candidate)
         ok = score >= 0.75
         print(f"[{'OK' if ok else '!!'}] транслит: {spoken!r} ~ {candidate!r} = {score:.2f}")
         failed += 0 if ok else 1
 
-    # Движок в середине фразы + защита от мусорных доменов
-    res = parse_engine_tail(normalize("открой на ютубе видео котиков"))
-    ok = res is not None and res[0] == "youtube" and res[2] == "видео котиков"
-    print(f"[{'OK' if ok else '!!'}] хвост: 'открой на ютубе видео котиков' -> {res}")
-    failed += 0 if ok else 1
+    # Движок в любом месте фразы + защита от мусорных доменов
+    for q, exp_engine, exp_query in [
+        ("открой на ютубе видео котиков", "youtube", "видео котиков"),
+        ("открой видео котят на ютубе", "youtube", "видео котят"),
+    ]:
+        res = parse_engine_tail(normalize(q))
+        ok = res is not None and res[0] == exp_engine and res[2] == exp_query
+        print(f"[{'OK' if ok else '!!'}] хвост: {q!r} -> {res}")
+        failed += 0 if ok else 1
     res = parse_engine_tail(normalize("от к но ютубе видео котиков"))  # каша из лога
     ok = res is not None and res[0] == "youtube"
     print(f"[{'OK' if ok else '!!'}] хвост (каша vosk): -> {res}")
@@ -162,13 +169,35 @@ def main() -> None:
         print(f"[{'OK' if ok else '!!'}] whisper ({dt:.1f}с): {phrase!r} -> {heard!r}")
         failed += 0 if ok else 1
 
-    # Живой индекс меню «Пуск» и процессы (информативно, зависит от машины)
+    # Живой индекс меню «Пуск», Steam и процессы (информативно, зависит от машины)
     index = scan_start_menu()
     print(f"[..] меню «Пуск»: {len(index)} программ")
     for spoken in ["обс", "телеграм", "клод"]:
         hit = find_installed(index, spoken)
         print(f"[..] установлено: {spoken!r} -> {hit[0] if hit else None}")
     print(f"[..] процесс 'хром' -> {find_process('хром')}")
+    from jarvis.steam import find_game, scan_steam_games
+    games = scan_steam_games()
+    print(f"[..] steam: {len(games)} игр")
+    for spoken in ["доту", "сабнатику"]:
+        g = find_game(games, spoken)
+        print(f"[..] игра: {spoken!r} -> {g[0] if g else None}")
+
+    # LLM-фолбэк (если Ollama доступна) — только разбор, без выполнения
+    from jarvis.brain import Brain
+    brain = Brain()
+    if brain.available:
+        for q, exp_actions in [
+            ("открой порно хаб", {"open_site", "open_app"}),
+            ("выключи музыку", {"close_app"}),
+            ("что такое черная дыра", {"search", "answer"}),
+        ]:
+            intent = brain.parse(q)
+            ok = intent is not None and intent.get("action") in exp_actions
+            print(f"[{'OK' if ok else '!!'}] llm: {q!r} -> {intent}")
+            failed += 0 if ok else 1
+    else:
+        print("[..] llm: Ollama недоступна, пропускаю")
 
     print("\nИтог:", "ВСЁ ОК" if failed == 0 else f"ОШИБОК: {failed}")
     sys.exit(1 if failed else 0)

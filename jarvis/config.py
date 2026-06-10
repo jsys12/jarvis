@@ -23,6 +23,12 @@ DEFAULT_CONFIG = {
     "use_whisper": True,
     "whisper_model": "auto",
     "whisper_device": "auto",
+    # LLM-фолбэк через Ollama: разбирает команды, которые не поняли правила.
+    # Требует установленной Ollama (winget install Ollama.Ollama) и модели
+    # (ollama pull qwen2.5:1.5b-instruct). Если Ollama нет — просто выключится.
+    "use_llm": True,
+    "llm_model": "qwen2.5:1.5b-instruct",
+    "ollama_url": "http://127.0.0.1:11434",
     # Переопределение путей встроенных приложений: {"discord": "C:\\...\\Discord.exe"}
     "app_paths": {},
     # Свои команды: фразы -> действие (путь к exe, ссылка или steam-URI)

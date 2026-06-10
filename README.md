@@ -29,6 +29,12 @@ Microsoft Pavel (WinRT/OneCore). Живёт в системном трее.
 - Скриншот: «Джарвис, сделай скриншот» → `Изображения\Screenshots`.
 - Простые вопросы: время, дата, день недели, «как дела», «что ты умеешь».
 - Свои команды в `config.json` — фраза → exe / ссылка / steam-URI.
+- **Игры Steam**: библиотека индексируется по appmanifest — «запусти сабнатику»
+  работает для любой установленной игры (запуск через steam://rungameid).
+- **LLM-фолбэк**: команды, которые правила не поняли, разбирает локальная
+  нейронка (Qwen2.5 1.5B через [Ollama](https://ollama.com), ~0.3 с на GPU).
+  Опционально: `winget install Ollama.Ollama && ollama pull qwen2.5:1.5b-instruct`;
+  без Ollama просто выключается (`use_llm: false` — принудительно).
 
 ## Установка
 
@@ -77,6 +83,7 @@ python -m jarvis
 | Wake-слово (стриминг) | Vosk (Kaldi), модель `vosk-model-small-ru-0.22` |
 | Расшифровка команды | faster-whisper (CTranslate2): GPU → `large-v3-turbo` int8_float16, CPU → `small` int8; `whisper_device`/`whisper_model` в конфиге, отключается `use_whisper: false` |
 | GPU | CUDA-библиотеки из pip (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`), системная CUDA не нужна |
+| Понимание команд | правила (мс) + LLM-фолбэк: Qwen2.5-1.5B-Instruct через Ollama REST (опционально) |
 | Синтез речи | WinRT `Windows.Media.SpeechSynthesis`, голос Microsoft Pavel; фолбэк — SAPI/Ирина |
 | Микрофон | sounddevice (PortAudio) |
 | Трей | pystray + Pillow |

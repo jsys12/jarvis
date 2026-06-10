@@ -85,6 +85,12 @@ def open_search(engine: str, query: str) -> None:
     open_url(SEARCH_URLS.get(engine, SEARCH_URLS["google"]).format(quote_plus(query)))
 
 
+def open_site_lucky(name: str) -> None:
+    """Открывает сайт по названию через DuckDuckGo «мне повезёт» (редирект
+    на первый результат). Работает для любого сайта и не зависит от DNS."""
+    open_url("https://duckduckgo.com/?q=" + quote_plus("\\" + name))
+
+
 def google_search(query: str) -> None:
     open_search("google", query)
 
@@ -187,11 +193,15 @@ def find_process(target: str, threshold: float = 0.8) -> str | None:
     """Имя exe запущенного процесса, лучше всего похожего на сказанное."""
     best_exe, best_score = None, 0.0
     for exe in list_processes():
-        base = exe.lower().removesuffix(".exe")
+        raw = exe.removesuffix(".exe").removesuffix(".EXE")
+        base = raw.lower()
         if base in _KILL_BLACKLIST:
             continue
         clean = re.sub(r"\d+$", "", base)  # obs64 -> obs
-        score = max(match_score(target, base), match_score(target, clean))
+        # RobloxPlayerInstaller -> roblox player installer
+        spaced = re.sub(r"(?<=[a-zа-я0-9])(?=[A-ZА-Я])", " ", raw).lower()
+        score = max(match_score(target, base), match_score(target, clean),
+                    match_score(target, spaced))
         if score > best_score:
             best_exe, best_score = exe, score
     if best_score >= threshold:

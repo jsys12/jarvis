@@ -156,9 +156,18 @@ def main() -> None:
         except Exception:
             log.exception("Whisper не завёлся, работаю только на Vosk")
 
+    brain = None
+    if config.get("use_llm", True):
+        from jarvis.brain import Brain
+
+        brain = Brain(config.get("llm_model", "qwen2.5:1.5b-instruct"),
+                      config.get("ollama_url", "http://127.0.0.1:11434"))
+        if not brain.available:
+            brain = None
+
     speaker = Speaker(config["voice"])
     listener = Listener(model_dir, config["sample_rate"], config.get("input_device"))
-    handler = IntentHandler(config, build_apps(config))
+    handler = IntentHandler(config, build_apps(config), brain)
     jarvis = Jarvis(config, listener, speaker, handler, BASE_DIR, whisper)
 
     worker = threading.Thread(target=jarvis.run_loop, daemon=True, name="jarvis-listener")

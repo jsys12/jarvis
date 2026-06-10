@@ -9,6 +9,7 @@ from difflib import SequenceMatcher
 from jarvis import APP_NAME, __version__, actions
 from jarvis.apps import find_app
 from jarvis.installed import find_installed, scan_start_menu
+from jarvis.steam import find_game, scan_steam_games
 
 log = logging.getLogger("jarvis.intents")
 
@@ -26,7 +27,10 @@ def _is_close_verb(tok: str) -> bool:
     return any(tok.startswith(s) for s in CLOSE_STEMS)
 FILLER = {"пожалуйста", "мне", "ка", "давай", "быстро", "срочно", "будь", "добр",
           # предлоги, союзы и огрызки распознавания — в цели команды они только мешают
-          "в", "на", "и", "а", "но", "ну", "от", "до", "же", "бы", "то", "это", "там"}
+          "в", "на", "и", "а", "но", "ну", "от", "до", "же", "бы", "то", "это", "там",
+          # слова-классификаторы: «запусти игру доту», «открой приложение дискорд»
+          "игру", "игра", "приложение", "программу", "программа"}
+BROWSER_WORDS = {"браузер", "браузере", "браузером", "хром", "хроме", "интернет", "интернете"}
 CANCEL = {"отмена", "стоп", "ничего", "забудь", "отбой"}
 
 SITES = {
@@ -89,15 +93,24 @@ def parse_search(cmd: str):
 
 
 def parse_engine_tail(cmd: str):
-    """Движок в середине фразы с хвостом-запросом: «открой на ютубе видео котиков»
-    -> поиск на Ютубе «видео котиков». Срабатывает даже на огрызках распознавания."""
+    """Движок с запросом в любом порядке: «открой на ютубе видео котиков»
+    и «открой видео котят на ютубе» -> поиск на Ютубе. Работает на огрызках."""
     tokens = cmd.split()
     for i, tok in enumerate(tokens):
         engine = _engine_in(tok)
-        if engine and i + 1 < len(tokens):
-            query = " ".join(t for t in tokens[i + 1:] if t not in FILLER)
-            if query:
-                return (*engine, query)
+        if not engine:
+            continue
+        # запрос после движка: «... на ютубе видео котиков»
+        query = " ".join(t for t in tokens[i + 1:] if t not in FILLER)
+        if query:
+            return (*engine, query)
+        # запрос до движка: «... видео котят на ютубе»
+        query = " ".join(
+            t for t in tokens[:i]
+            if t not in FILLER and not _is_open_verb(t) and not _is_close_verb(t)
+        )
+        if query:
+            return (*engine, query)
     return None
 
 
@@ -108,9 +121,11 @@ def normalize(text: str) -> str:
 
 
 class IntentHandler:
-    def __init__(self, config: dict, apps: list):
+    def __init__(self, config: dict, apps: list, brain=None):
         self.apps = apps
+        self.brain = brain
         self.installed = scan_start_menu()
+        self.steam_games = scan_steam_games()
         self.custom = []
         for entry in config.get("custom_commands", []):
             phrases = [normalize(p) for p in entry.get("phrases", []) if p.strip()]
@@ -152,7 +167,42 @@ class IntentHandler:
         reply = self._small_talk(cmd)
         if reply:
             return reply
+
+        # Правила не справились — спрашиваем локальную нейронку
+        if self.brain is not None:
+            intent = self.brain.parse(cmd)
+            if intent:
+                reply = self._execute_intent(intent)
+                if reply:
+                    return reply
         return "Я не понял команду. Скажите, например: открой стим."
+
+    def _execute_intent(self, intent: dict) -> str | None:
+        """Выполняет интент от LLM средствами обычного пайплайна."""
+        action = intent.get("action")
+        target = normalize(str(intent.get("target") or ""))
+        query = str(intent.get("query") or "").strip()
+        if action == "open_app" and target:
+            return self._do_open(target)
+        if action == "close_app" and target:
+            return self._do_close(target)
+        if action == "open_site" and (target or query):
+            site = target or query
+            if "." in (intent.get("target") or ""):  # LLM знает домен: pornhub.com
+                actions.open_url("https://" + str(intent["target"]).strip().lower())
+                return f"Открываю {site}."
+            return self._open_site(site)
+        if action == "search" and (query or target):
+            engine = intent.get("engine") if intent.get("engine") in ("google", "youtube", "wiki") else "google"
+            q = query or target
+            actions.open_search(engine, q)
+            return f"Ищу: {q}."
+        if action == "screenshot":
+            path = actions.take_screenshot()
+            return f"Скриншот сохранён в папку {path.parent.name}."
+        if action == "answer" and intent.get("reply"):
+            return str(intent["reply"])[:300]
+        return None
 
     # --- внутренности -------------------------------------------------
 
@@ -167,47 +217,72 @@ class IntentHandler:
     def _do_open(self, target: str) -> str:
         if not target:
             return "Что именно открыть?"
-        if any(w in target for w in ("браузер", "интернет", "хром")):
-            actions.open_browser()
-            return "Открываю браузер."
+
+        # «открой в браузере порнхаб» — браузер + сайт; голый «браузер» — просто браузер
+        tokens = target.split()
+        rest = [t for t in tokens if t not in BROWSER_WORDS]
+        if len(rest) < len(tokens):
+            if not rest:
+                actions.open_browser()
+                return "Открываю браузер."
+            return self._open_site(" ".join(rest))
 
         # «открой сайт хабр» / «открой ссылку на ютуб» — явная просьба про сайт
         site_only = bool(re.match(r"^(сайт|ссылк|страниц)", target))
-        site_target = re.sub(r"^(сайт|ссылку|ссылка|страницу)\s*(на)?\s*", "", target).strip() or target
+        site_target = re.sub(r"^(сайт\w*|ссылку|ссылка|страницу)\s*(на)?\s*", "", target).strip() or target
+        if site_only:
+            return self._open_site(site_target)
 
         # 1. Встроенный каталог (стим, дискорд, дота...)
-        if not site_only:
-            app = find_app(self.apps, target)
-            if app:
-                spec = app.resolve_open()
-                if spec is None:
-                    return f"{app.title} не найден на этом компьютере. Укажите путь в конфиге."
-                actions.run_spec(spec)
-                return f"Открываю {app.title}."
+        app = find_app(self.apps, target)
+        if app:
+            spec = app.resolve_open()
+            if spec is None:
+                return f"{app.title} не найден на этом компьютере. Укажите путь в конфиге."
+            actions.run_spec(spec)
+            return f"Открываю {app.title}."
 
         # 2. Известные сайты
         for key, (title, url) in SITES.items():
-            if key in site_target.split() or site_target == key:
+            if key in target.split() or target == key:
                 actions.open_url(url)
                 return f"Открываю {title}."
 
-        # 3. Любая установленная программа из меню «Пуск» («открой обс»)
-        if not site_only:
-            hit = find_installed(self.installed, target)
-            if hit:
-                name, lnk = hit
-                actions.open_path(lnk)
-                return f"Открываю {name}."
+        # 3. Игры из библиотеки Steam («запусти сабнатику»)
+        game = find_game(self.steam_games, target)
+        if game:
+            title, appid = game
+            actions.run_spec(("uri", f"steam://rungameid/{appid}"))
+            return f"Запускаю {title}."
 
-        # 4. Продиктованный домен («хабр точка ру») или угадывание сайта по DNS
-        url = actions.spoken_domain(site_target) or actions.guess_site(site_target)
+        # 4. Любая установленная программа из меню «Пуск» («открой обс»)
+        hit = find_installed(self.installed, target)
+        if hit:
+            name, lnk = hit
+            actions.open_path(lnk)
+            return f"Открываю {name}."
+
+        # 5. Не нашли на компьютере — пробуем как сайт
+        return self._open_site(target)
+
+    def _open_site(self, name: str) -> str:
+        if not name:
+            return "Какой сайт открыть?"
+        for key, (title, url) in SITES.items():
+            if name == key or key in name.split():
+                actions.open_url(url)
+                return f"Открываю {title}."
+        # продиктованный домен («хабр точка ру») или DNS-угадывание
+        url = actions.spoken_domain(name) or actions.guess_site(name)
         if url:
             actions.open_url(url)
-            return f"Открываю сайт {site_target}."
-
-        # 5. Последний шанс — поиск
-        actions.google_search(target)
-        return f"Не нашёл {target} на компьютере. Открываю поиск."
+            return f"Открываю сайт {name}."
+        # универсальный путь: DuckDuckGo «мне повезёт» — первый результат
+        if len(name.split()) <= 3:
+            actions.open_site_lucky(name)
+            return f"Открываю {name}."
+        actions.google_search(name)
+        return f"Ищу {name}."
 
     def _do_close(self, target: str) -> str:
         if not target:
