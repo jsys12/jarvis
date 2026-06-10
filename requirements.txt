@@ -1,5 +1,6 @@
 vosk>=0.3.45
 faster-whisper>=1.2
+piper-tts>=1.3
 # Для GPU (NVIDIA): CUDA-библиотеки ставятся pip'ом, системная CUDA не нужна.
 # На машине без NVIDIA эти две строки можно удалить — Whisper уйдёт на CPU.
 nvidia-cublas-cu12

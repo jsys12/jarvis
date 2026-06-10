@@ -47,7 +47,8 @@ def main() -> None:
     # Whisper — строго до первого использования WinRT (иначе access violation)
     from jarvis.stt import WhisperTranscriber
     whisper = WhisperTranscriber("auto", "auto")
-    speaker = Speaker("Pavel")
+    # для прогона TTS->STT нужен WinRT-бэкенд (piper проверяется отдельно ниже)
+    speaker = Speaker({"tts_backend": "winrt", "voice": "Pavel"})
     assert speaker._mode == "winrt", "Pavel/WinRT недоступен"
     model = Model(str(BASE / "models" / "vosk-model-small-ru-0.22"))
     apps = build_apps({})
@@ -183,17 +184,53 @@ def main() -> None:
         g = find_game(games, spoken)
         print(f"[..] игра: {spoken!r} -> {g[0] if g else None}")
 
+    # Piper TTS: синтез валидного WAV без проигрывания
+    import io as _io
+    import wave as _wave
+    piper_speaker = Speaker({"tts_backend": "piper", "tts_voice": "ruslan", "voice_rate": 1.15})
+    ok = piper_speaker._mode == "piper"
+    if ok:
+        buf = _io.BytesIO()
+        with _wave.open(buf, "wb") as wf:
+            piper_speaker._piper.synthesize_wav("проверка связи", wf, piper_speaker._piper_cfg)
+        ok = buf.getvalue()[:4] == b"RIFF"
+    print(f"[{'OK' if ok else '!!'}] piper: режим {piper_speaker._mode}, wav {'валиден' if ok else 'нет'}")
+    failed += 0 if ok else 1
+
+    # Цепочки: делим только когда каждая часть — команда
+    chains = handler._split_chain(normalize("сделай скриншот и открой его"))
+    ok = len(chains) == 2 and chains[1] == "открой его"
+    print(f"[{'OK' if ok else '!!'}] цепочка: скриншот+открой -> {chains}")
+    failed += 0 if ok else 1
+    chains = handler._split_chain(normalize("найди кошки и собаки"))
+    ok = len(chains) == 1
+    print(f"[{'OK' if ok else '!!'}] цепочка: «кошки и собаки» не делится -> {chains}")
+    failed += 0 if ok else 1
+    chains = handler._split_chain(normalize("открой стим и закрой дискорд и сделай скриншот"))
+    ok = len(chains) == 3
+    print(f"[{'OK' if ok else '!!'}] цепочка из трёх -> {chains}")
+    failed += 0 if ok else 1
+
+    # «открой его» без последнего файла — безопасный ответ, ничего не открывает
+    reply = handler._do_open("его")
+    ok = "нечего" in reply
+    print(f"[{'OK' if ok else '!!'}] местоимение без файла -> {reply!r}")
+    failed += 0 if ok else 1
+
     # LLM-фолбэк (если Ollama доступна) — только разбор, без выполнения
     from jarvis.brain import Brain
     brain = Brain()
     if brain.available:
-        for q, exp_actions in [
-            ("открой порно хаб", {"open_site", "open_app"}),
-            ("выключи музыку", {"close_app"}),
-            ("что такое черная дыра", {"search", "answer"}),
+        for q, check in [
+            ("открой порно хаб", lambda i: i.get("action") in {"open_site", "open_app"}),
+            ("что такое черная дыра", lambda i: i.get("action") in {"search", "answer"}),
+            ("включи музыку", lambda i: "steps" in i or i.get("action") in {"open_app", "media_key"}),
+            # цепочку эту разбирают правила; от LLM достаточно валидного интента
+            ("сделай скриншот и открой его",
+             lambda i: "steps" in i or i.get("action") == "screenshot"),
         ]:
             intent = brain.parse(q)
-            ok = intent is not None and intent.get("action") in exp_actions
+            ok = intent is not None and check(intent)
             print(f"[{'OK' if ok else '!!'}] llm: {q!r} -> {intent}")
             failed += 0 if ok else 1
     else:

@@ -1,5 +1,6 @@
 """Низкоуровневые действия: запуск, завершение процессов, скриншоты, ссылки."""
 
+import ctypes
 import datetime
 import logging
 import os
@@ -95,9 +96,33 @@ def google_search(query: str) -> None:
     open_search("google", query)
 
 
-def open_path(path) -> None:
-    log.info("Открываю: %s", path)
-    os.startfile(path)
+def open_path(path, minimized: bool = False) -> None:
+    log.info("Открываю%s: %s", " свёрнуто" if minimized else "", path)
+    if minimized:
+        # start /min работает и для exe, и для .lnk, и для URI
+        subprocess.Popen(f'start /min "" "{path}"', shell=True,
+                         creationflags=subprocess.CREATE_NO_WINDOW)
+    else:
+        os.startfile(path)
+
+
+# --- мультимедийные клавиши -------------------------------------------------
+
+_VK = {"play": 0xB3, "stop": 0xB2, "next": 0xB0, "prev": 0xB1,
+       "mute": 0xAD, "vol_up": 0xAF, "vol_down": 0xAE}
+_KEYUP = 0x0002
+
+
+def media_key(name: str, times: int = 1) -> bool:
+    """Жмёт системную медиа-клавишу (как на клавиатуре): play/next/vol_up..."""
+    vk = _VK.get(name)
+    if vk is None:
+        return False
+    log.info("Медиа-клавиша: %s x%d", name, times)
+    for _ in range(times):
+        ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(vk, 0, _KEYUP, 0)
+    return True
 
 
 # --- произвольные сайты ---------------------------------------------------

@@ -15,18 +15,22 @@ import urllib.request
 log = logging.getLogger("jarvis.brain")
 
 SYSTEM = """Ты разбираешь команды голосового ассистента на Windows. Отвечай ТОЛЬКО JSON.
-Действия: open_app (открыть программу или игру), close_app (закрыть), open_site (открыть сайт), search (поиск в интернете), screenshot, answer (короткий ответ на вопрос), none (бессмыслица).
+Действия: open_app (открыть программу или игру; поле minimized=true — свёрнуто), close_app, open_site (открыть сайт), search (поиск), screenshot, open_file (открыть последний созданный файл), media_key (key: play|next|prev|vol_up|vol_down|mute), wait (seconds), answer (короткий ответ на вопрос), none (бессмыслица).
 Поля: action; target — название программы или домен сайта; query — поисковый запрос; engine — google|youtube|wiki; reply — ответ для answer.
+Если команд несколько — верни {"steps":[...]} со списком действий по порядку.
 Примеры:
 открой стим -> {"action":"open_app","target":"стим"}
 запусти сабнатику -> {"action":"open_app","target":"сабнатика"}
-выключи музыку -> {"action":"close_app","target":"музыка"}
 открой порно хаб -> {"action":"open_site","target":"pornhub.com"}
 найди на ютубе котиков -> {"action":"search","engine":"youtube","query":"котики"}
 что такое чёрная дыра -> {"action":"search","engine":"google","query":"что такое чёрная дыра"}
-сколько будет два плюс два -> {"action":"answer","reply":"Четыре"}"""
+сколько будет два плюс два -> {"action":"answer","reply":"Четыре"}
+включи музыку -> {"steps":[{"action":"open_app","target":"яндекс музыка","minimized":true},{"action":"wait","seconds":6},{"action":"media_key","key":"play"}]}
+сделай скриншот и открой его -> {"steps":[{"action":"screenshot"},{"action":"open_file"}]}
+открой стим и сделай потише -> {"steps":[{"action":"open_app","target":"стим"},{"action":"media_key","key":"vol_down","times":5}]}"""
 
-ACTIONS = {"open_app", "close_app", "open_site", "search", "screenshot", "answer", "none"}
+ACTIONS = {"open_app", "close_app", "open_site", "search", "screenshot",
+           "open_file", "media_key", "wait", "answer", "none"}
 
 
 class Brain:
@@ -99,6 +103,12 @@ class Brain:
         except Exception:
             log.exception("LLM не справилась с %r", cmd)
             return None
-        if not isinstance(intent, dict) or intent.get("action") not in ACTIONS:
+        if not isinstance(intent, dict):
+            return None
+        if isinstance(intent.get("steps"), list):
+            steps = [s for s in intent["steps"]
+                     if isinstance(s, dict) and s.get("action") in ACTIONS]
+            return {"steps": steps} if steps else None
+        if intent.get("action") not in ACTIONS:
             return None
         return intent

@@ -4,6 +4,8 @@ import datetime
 import logging
 import random
 import re
+import threading
+import time
 from difflib import SequenceMatcher
 
 from jarvis import APP_NAME, __version__, actions
@@ -126,15 +128,45 @@ class IntentHandler:
         self.brain = brain
         self.installed = scan_start_menu()
         self.steam_games = scan_steam_games()
+        self.music_app = config.get("music_app", "яндекс музыка")
+        self.music_wait = float(config.get("music_wait_sec", 6))
+        self.last_file = None  # последний созданный файл — для «открой его»
         self.custom = []
         for entry in config.get("custom_commands", []):
             phrases = [normalize(p) for p in entry.get("phrases", []) if p.strip()]
-            action = entry.get("action", "").strip()
+            action = entry.get("action", "").strip() or entry.get("steps")
             if phrases and action:
                 self.custom.append((phrases, action, entry.get("reply", "Выполняю.")))
 
+    # --- цепочки: «сделай скриншот и открой его» -------------------------
+
+    _CHAIN_SEP = re.compile(r"\s+(?:а\s+)?(?:и|потом|затем|после этого)\s+")
+    _CHAIN_STARTERS = {"сделай", "сними", "найди", "поищи", "загугли", "погугли",
+                       "скажи", "поставь", "переключи", "покажи"}
+
+    def _split_chain(self, cmd: str) -> list[str]:
+        parts = [p.strip() for p in self._CHAIN_SEP.split(cmd) if p.strip()]
+        if len(parts) < 2:
+            return [cmd]
+        # делим, только если каждая следующая часть начинается с команды —
+        # иначе «найди кошки и собаки» развалится на бессмыслицу
+        for part in parts[1:]:
+            first = part.split()[0]
+            if not (_is_open_verb(first) or _is_close_verb(first)
+                    or first in self._CHAIN_STARTERS or "скрин" in first):
+                return [cmd]
+        return parts
+
     def handle(self, cmd: str) -> str:
         """Принимает нормализованную команду, возвращает ответ для озвучки."""
+        parts = self._split_chain(cmd)
+        if len(parts) > 1:
+            log.info("Цепочка из %d шагов: %s", len(parts), parts)
+            replies = [self._handle_single(p) for p in parts]
+            return " ".join(r for r in replies if r)
+        return self._handle_single(cmd)
+
+    def _handle_single(self, cmd: str) -> str:
         if cmd in CANCEL:
             return "Хорошо."
 
@@ -142,8 +174,18 @@ class IntentHandler:
         if reply:
             return reply
 
-        if any(w in cmd for w in ("скриншот", "скрин", "снимок экрана")):
+        # Музыка и медиа-клавиши — до глаголов («включи музыку» это не open_app)
+        reply = self._media(cmd)
+        if reply:
+            return reply
+
+        if re.search(r"скрин|снимок экрана", cmd):
+            tokens_ = cmd.split()
+            if any(_is_open_verb(t) or t == "покажи" for t in tokens_):
+                # «открой скриншот / открой его» — показать последний
+                return self._open_last_file()
             path = actions.take_screenshot()
+            self.last_file = path
             return f"Скриншот сохранён в папку {path.parent.name}."
 
         # Поиск с запросом — раньше глаголов, чтобы сработало
@@ -172,10 +214,31 @@ class IntentHandler:
         if self.brain is not None:
             intent = self.brain.parse(cmd)
             if intent:
-                reply = self._execute_intent(intent)
+                if isinstance(intent.get("steps"), list):
+                    reply = self._execute_steps(intent["steps"])
+                else:
+                    reply = self._execute_intent(intent)
                 if reply:
                     return reply
         return "Я не понял команду. Скажите, например: открой стим."
+
+    def _execute_steps(self, steps: list) -> str | None:
+        """Выполняет цепочку шагов (от LLM или из custom_commands)."""
+        reply = None
+        for step in steps[:6]:
+            if not isinstance(step, dict):
+                continue
+            action = step.get("action")
+            if action == "wait":
+                time.sleep(min(float(step.get("seconds", 1) or 1), 15))
+                continue
+            if action == "media_key":
+                actions.media_key(str(step.get("key", "")), int(step.get("times", 1) or 1))
+                continue
+            r = self._execute_intent(step)
+            if r:
+                reply = r
+        return reply
 
     def _execute_intent(self, intent: dict) -> str | None:
         """Выполняет интент от LLM средствами обычного пайплайна."""
@@ -183,7 +246,14 @@ class IntentHandler:
         target = normalize(str(intent.get("target") or ""))
         query = str(intent.get("query") or "").strip()
         if action == "open_app" and target:
+            if intent.get("minimized"):
+                hit = find_installed(self.installed, target)
+                if hit:
+                    actions.open_path(hit[1], minimized=True)
+                    return f"Открываю {hit[0]}."
             return self._do_open(target)
+        if action == "open_file":
+            return self._open_last_file()
         if action == "close_app" and target:
             return self._do_close(target)
         if action == "open_site" and (target or query):
@@ -199,6 +269,7 @@ class IntentHandler:
             return f"Ищу: {q}."
         if action == "screenshot":
             path = actions.take_screenshot()
+            self.last_file = path
             return f"Скриншот сохранён в папку {path.parent.name}."
         if action == "answer" and intent.get("reply"):
             return str(intent["reply"])[:300]
@@ -210,13 +281,65 @@ class IntentHandler:
         for phrases, action, reply in self.custom:
             for phrase in phrases:
                 if cmd == phrase or SequenceMatcher(None, cmd, phrase).ratio() >= 0.85:
+                    if isinstance(action, list):  # цепочка шагов из конфига
+                        return self._execute_steps(action) or reply
                     actions.run_spec(actions.spec_from_string(action))
                     return reply
         return None
 
+    # --- музыка и медиа ---------------------------------------------------
+
+    def _media(self, cmd: str) -> str | None:
+        if re.search(r"(включ|вруб|постав|запуст|игра)\w*\s.*музык", cmd) or \
+                re.search(r"включ\w*\s+(мою\s+)?волну", cmd):
+            return self._music_on()
+        if re.search(r"(выключ|выруб|останов|стоп)\w*\s.*музык", cmd):
+            actions.media_key("play")  # toggle: ставит на паузу
+            return "Ставлю на паузу."
+        if re.search(r"^(пауза|на паузу|постав\w* на паузу|продолж\w*|плей)$", cmd):
+            actions.media_key("play")
+            return "Готово."
+        if re.search(r"(следующ|дальше|некст)", cmd) and re.search(r"трек|песн|музык|дальше", cmd):
+            actions.media_key("next")
+            return "Переключаю."
+        if re.search(r"предыдущ\w*\s+(трек|песн)", cmd):
+            actions.media_key("prev")
+            return "Возвращаю."
+        if re.search(r"^(сделай\s+)?(по)?громче$", cmd) or "громкость выше" in cmd:
+            actions.media_key("vol_up", 5)
+            return "Громче."
+        if re.search(r"^(сделай\s+)?(по)?тише$", cmd) or "громкость ниже" in cmd:
+            actions.media_key("vol_down", 5)
+            return "Тише."
+        if re.search(r"без звука|отключи звук|мьют", cmd):
+            actions.media_key("mute")
+            return "Без звука."
+        return None
+
+    def _music_on(self) -> str:
+        hit = find_installed(self.installed, self.music_app)
+        if hit:
+            name, lnk = hit
+            actions.open_path(lnk, minimized=True)
+            # даём плееру запуститься и жмём play — обычно стартует «Моя волна»
+            threading.Timer(self.music_wait, actions.media_key, args=("play",)).start()
+            return "Включаю музыку."
+        actions.open_url("https://music.yandex.ru/personal/my-wave")
+        return "Плеер не найден, открываю Мою волну в браузере."
+
+    def _open_last_file(self) -> str:
+        if self.last_file:
+            actions.open_path(self.last_file)
+            return "Открываю."
+        return "Пока нечего открывать."
+
     def _do_open(self, target: str) -> str:
         if not target:
             return "Что именно открыть?"
+
+        # «сделай скриншот и открой его» — местоимения указывают на последний файл
+        if target in {"его", "ее", "это", "этот файл", "файл", "последний файл"}:
+            return self._open_last_file()
 
         # «открой в браузере порнхаб» — браузер + сайт; голый «браузер» — просто браузер
         tokens = target.split()

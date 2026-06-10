@@ -165,7 +165,7 @@ def main() -> None:
         if not brain.available:
             brain = None
 
-    speaker = Speaker(config["voice"])
+    speaker = Speaker(config)
     listener = Listener(model_dir, config["sample_rate"], config.get("input_device"))
     handler = IntentHandler(config, build_apps(config), brain)
     jarvis = Jarvis(config, listener, speaker, handler, BASE_DIR, whisper)

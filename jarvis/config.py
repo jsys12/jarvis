@@ -11,6 +11,12 @@ DEFAULT_CONFIG = {
     # Подбор нового имени: python scripts/wakebench.py
     "wake_words": ["феникс", "финикс", "феникса", "fenix", "phoenix",
                    "джарвис", "jarvis"],
+    # Синтез речи: piper (нейроголос, рекомендуется) / winrt (Pavel) / sapi
+    "tts_backend": "piper",
+    # Голоса piper: ruslan (чёткий) / dmitri (глубже); сэмплы — scripts/voicedemo.py
+    "tts_voice": "ruslan",
+    # Скорость дикции: 1.0 — обычная, 1.15 — слегка быстрее
+    "voice_rate": 1.15,
     "voice": "Pavel",
     "sample_rate": 16000,
     # null — микрофон по умолчанию; иначе индекс устройства из sounddevice
@@ -29,6 +35,10 @@ DEFAULT_CONFIG = {
     "use_llm": True,
     "llm_model": "qwen2.5:1.5b-instruct",
     "ollama_url": "http://127.0.0.1:11434",
+    # «Включи музыку»: какой плеер открывать (ищется в меню «Пуск»)
+    # и через сколько секунд после запуска жать play
+    "music_app": "яндекс музыка",
+    "music_wait_sec": 6,
     # Переопределение путей встроенных приложений: {"discord": "C:\\...\\Discord.exe"}
     "app_paths": {},
     # Свои команды: фразы -> действие (путь к exe, ссылка или steam-URI)

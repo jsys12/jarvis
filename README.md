@@ -4,8 +4,9 @@
 [Vosk](https://alphacephei.com/vosk/) (`vosk-model-small-ru`, ~45 МБ) непрерывно слушает
 и ловит wake-слово, а команду точно расшифровывает **Whisper**. На машине с NVIDIA
 автоматически берётся `large-v3-turbo` на GPU (int8_float16, ~1.5 ГБ VRAM,
-~0.3–0.5 с на команду), без GPU — `small` на CPU. Синтез — системный мужской голос
-Microsoft Pavel (WinRT/OneCore). Живёт в системном трее.
+~0.3–0.5 с на команду), без GPU — `small` на CPU. Синтез — локальный нейроголос
+Piper (ru_RU ruslan/dmitri, ~0.2 с на CPU), фолбэк — системный Pavel.
+Живёт в системном трее.
 
 ## Возможности
 
@@ -35,6 +36,15 @@ Microsoft Pavel (WinRT/OneCore). Живёт в системном трее.
   нейронка (Qwen2.5 1.5B через [Ollama](https://ollama.com), ~0.3 с на GPU).
   Опционально: `winget install Ollama.Ollama && ollama pull qwen2.5:1.5b-instruct`;
   без Ollama просто выключается (`use_llm: false` — принудительно).
+- **Цепочки действий**: «сделай скриншот и открой его», «открой стим и закрой
+  дискорд» — фраза делится на шаги (или LLM возвращает план `steps`).
+  Местоимение «его» указывает на последний созданный файл.
+- **Музыка и медиа**: «включи музыку» — плеер из `music_app` запускается
+  свёрнуто, через `music_wait_sec` секунд жмётся play («Моя волна» в Яндекс
+  Музыке). «Пауза», «следующий трек», «громче/тише», «без звука» —
+  системные медиа-клавиши, работают с любым плеером.
+- В `custom_commands` можно задавать цепочки: `"steps": [{"action":"open_app",
+  "target":"obs","minimized":true},{"action":"wait","seconds":3},...]`.
 
 ## Установка
 
@@ -84,7 +94,7 @@ python -m jarvis
 | Расшифровка команды | faster-whisper (CTranslate2): GPU → `large-v3-turbo` int8_float16, CPU → `small` int8; `whisper_device`/`whisper_model` в конфиге, отключается `use_whisper: false` |
 | GPU | CUDA-библиотеки из pip (`nvidia-cublas-cu12`, `nvidia-cudnn-cu12`), системная CUDA не нужна |
 | Понимание команд | правила (мс) + LLM-фолбэк: Qwen2.5-1.5B-Instruct через Ollama REST (опционально) |
-| Синтез речи | WinRT `Windows.Media.SpeechSynthesis`, голос Microsoft Pavel; фолбэк — SAPI/Ирина |
+| Синтез речи | Piper TTS (ONNX, CPU): `tts_voice` ruslan/dmitri, скорость `voice_rate`; фолбэки WinRT/Pavel и SAPI. Прослушка: `python scripts/voicedemo.py` |
 | Микрофон | sounddevice (PortAudio) |
 | Трей | pystray + Pillow |
 
