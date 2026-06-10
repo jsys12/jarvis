@@ -5,3 +5,4 @@ venv/
 models/
 *.log
 *.wav
+selftest_out.txt
