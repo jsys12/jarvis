@@ -5,6 +5,7 @@
   "voice_rate": 1.15,
   "voice": "Pavel",
   "music_app": "яндекс музыка",
+  "music_uri": "yandexmusic://radio/user:onyourwave",
   "music_wait_sec": 6,
   "sample_rate": 16000,
   "input_device": null,

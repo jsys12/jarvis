@@ -65,6 +65,56 @@ def close_browser() -> bool:
     return any([kill_process(p) for p in BROWSER_PROCS])
 
 
+def uri_scheme_exists(scheme: str) -> bool:
+    """Зарегистрирован ли URL-протокол (yandexmusic:// и т.п.)."""
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, scheme) as k:
+            winreg.QueryValueEx(k, "URL Protocol")
+            return True
+    except OSError:
+        return False
+
+
+def ensure_music_playing(hint: str = "музык|yandex|music", attempts: int = 2) -> None:
+    """Если плеер запущен, но не играет — жмёт play именно его медиа-сессии.
+
+    Свежезапущенный плеер регистрирует сессию не сразу, поэтому при её
+    отсутствии повторяем попытку, в конце — общая медиа-клавиша.
+    """
+    import asyncio
+    import threading
+
+    async def _try() -> str:
+        from winrt.windows.media.control import (
+            GlobalSystemMediaTransportControlsSessionManager as Manager,
+        )
+
+        mgr = await Manager.request_async()
+        sessions = list(mgr.get_sessions())
+        matched = [s for s in sessions
+                   if re.search(hint, s.source_app_user_model_id.lower())] or sessions
+        for s in matched:
+            status = s.get_playback_info().playback_status
+            if status == 4:  # уже играет
+                return "playing"
+            await s.try_play_async()
+            return "started"
+        return "no_session"
+
+    try:
+        result = asyncio.run(_try())
+    except Exception:
+        log.exception("Media Control недоступен")
+        result = "error"
+    log.info("ensure_music_playing: %s (осталось попыток %d)", result, attempts)
+    if result == "no_session" and attempts > 1:
+        threading.Timer(5.0, ensure_music_playing, args=(hint, attempts - 1)).start()
+    elif result in ("no_session", "error"):
+        media_key("play")  # последний шанс — системная клавиша
+
+
 def take_screenshot() -> Path:
     SCREENSHOTS_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -102,19 +152,30 @@ def open_path(path, minimized: bool = False) -> None:
         # start /min работает и для exe, и для .lnk, и для URI
         subprocess.Popen(f'start /min "" "{path}"', shell=True,
                          creationflags=subprocess.CREATE_NO_WINDOW)
-    else:
+        return
+    try:
         os.startfile(path)
+    except OSError:
+        # сломанная ассоциация файла — показываем в браузере или в проводнике
+        log.warning("Нет ассоциации для %s, открываю через браузер", path)
+        try:
+            webbrowser.open(Path(path).absolute().as_uri())
+        except Exception:
+            subprocess.Popen(["explorer", "/select,", str(path)])
 
 
 # --- мультимедийные клавиши -------------------------------------------------
 
 _VK = {"play": 0xB3, "stop": 0xB2, "next": 0xB0, "prev": 0xB1,
        "mute": 0xAD, "vol_up": 0xAF, "vol_down": 0xAE}
+# LLM любит синонимы — приводим к play/pause-тогглу
+_VK_ALIASES = {"pause": "play", "play_pause": "play", "toggle": "play", "resume": "play"}
 _KEYUP = 0x0002
 
 
 def media_key(name: str, times: int = 1) -> bool:
     """Жмёт системную медиа-клавишу (как на клавиатуре): play/next/vol_up..."""
+    name = _VK_ALIASES.get(name, name)
     vk = _VK.get(name)
     if vk is None:
         return False

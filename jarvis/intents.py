@@ -129,6 +129,7 @@ class IntentHandler:
         self.installed = scan_start_menu()
         self.steam_games = scan_steam_games()
         self.music_app = config.get("music_app", "яндекс музыка")
+        self.music_uri = config.get("music_uri", "yandexmusic://radio/user:onyourwave")
         self.music_wait = float(config.get("music_wait_sec", 6))
         self.last_file = None  # последний созданный файл — для «открой его»
         self.custom = []
@@ -143,17 +144,24 @@ class IntentHandler:
     _CHAIN_SEP = re.compile(r"\s+(?:а\s+)?(?:и|потом|затем|после этого)\s+")
     _CHAIN_STARTERS = {"сделай", "сними", "найди", "поищи", "загугли", "погугли",
                        "скажи", "поставь", "переключи", "покажи"}
+    # односложные команды, которым позволено быть отдельным шагом цепочки
+    _CHAIN_SINGLES = {"пауза", "плей", "стоп", "скриншот", "громче", "тише",
+                      "погромче", "потише", "дальше"}
 
     def _split_chain(self, cmd: str) -> list[str]:
         parts = [p.strip() for p in self._CHAIN_SEP.split(cmd) if p.strip()]
         if len(parts) < 2:
             return [cmd]
-        # делим, только если каждая следующая часть начинается с команды —
-        # иначе «найди кошки и собаки» развалится на бессмыслицу
+        # делим, только если каждая следующая часть начинается с команды,
+        # а огрызки из одного слова («сделай и открой скриншот») не отрываем
+        for part in parts:
+            if len(part.split()) == 1 and part not in self._CHAIN_SINGLES:
+                return [cmd]
         for part in parts[1:]:
             first = part.split()[0]
             if not (_is_open_verb(first) or _is_close_verb(first)
-                    or first in self._CHAIN_STARTERS or "скрин" in first):
+                    or first in self._CHAIN_STARTERS
+                    or part in self._CHAIN_SINGLES or "скрин" in first):
                 return [cmd]
         return parts
 
@@ -181,11 +189,16 @@ class IntentHandler:
 
         if re.search(r"скрин|снимок экрана", cmd):
             tokens_ = cmd.split()
-            if any(_is_open_verb(t) or t == "покажи" for t in tokens_):
-                # «открой скриншот / открой его» — показать последний
+            has_open = any(_is_open_verb(t) or t == "покажи" for t in tokens_)
+            has_make = any(t.startswith(("сдела", "сним", "щелк")) for t in tokens_)
+            if has_open and not has_make:
+                # «открой скриншот / покажи скриншот» — показать последний
                 return self._open_last_file()
             path = actions.take_screenshot()
             self.last_file = path
+            if has_open:  # «сделай и открой скриншот»
+                self._open_last_file()
+                return "Скриншот сделан, открываю."
             return f"Скриншот сохранён в папку {path.parent.name}."
 
         # Поиск с запросом — раньше глаголов, чтобы сработало
@@ -254,6 +267,10 @@ class IntentHandler:
             return self._do_open(target)
         if action == "open_file":
             return self._open_last_file()
+        if action == "media_key":
+            ok = actions.media_key(str(intent.get("key", "")),
+                                   int(intent.get("times", 1) or 1))
+            return "Готово." if ok else None
         if action == "close_app" and target:
             return self._do_close(target)
         if action == "open_site" and (target or query):
@@ -290,19 +307,20 @@ class IntentHandler:
     # --- музыка и медиа ---------------------------------------------------
 
     def _media(self, cmd: str) -> str | None:
-        if re.search(r"(включ|вруб|постав|запуст|игра)\w*\s.*музык", cmd) or \
-                re.search(r"включ\w*\s+(мою\s+)?волну", cmd):
-            return self._music_on()
-        if re.search(r"(выключ|выруб|останов|стоп)\w*\s.*музык", cmd):
-            actions.media_key("play")  # toggle: ставит на паузу
-            return "Ставлю на паузу."
-        if re.search(r"^(пауза|на паузу|постав\w* на паузу|продолж\w*|плей)$", cmd):
+        musicy = re.search(r"музык|трек|песн|волн", cmd) is not None
+        # пауза/стоп проверяются ДО включения: «поставь музыку на паузу»
+        if "пауз" in cmd or (musicy and re.search(r"выключ|выруб|останов|стоп", cmd)):
+            actions.media_key("play")  # toggle
+            return "Пауза."
+        if cmd in {"продолжи", "продолжить", "плей", "играй", "стоп"}:
             actions.media_key("play")
             return "Готово."
-        if re.search(r"(следующ|дальше|некст)", cmd) and re.search(r"трек|песн|музык|дальше", cmd):
+        if musicy and re.search(r"включ|вруб|постав|запуст|играй|сыграй", cmd):
+            return self._music_on()
+        if re.search(r"следующ|некст", cmd) and musicy or cmd == "дальше":
             actions.media_key("next")
             return "Переключаю."
-        if re.search(r"предыдущ\w*\s+(трек|песн)", cmd):
+        if re.search(r"предыдущ", cmd) and musicy:
             actions.media_key("prev")
             return "Возвращаю."
         if re.search(r"^(сделай\s+)?(по)?громче$", cmd) or "громкость выше" in cmd:
@@ -317,12 +335,19 @@ class IntentHandler:
         return None
 
     def _music_on(self) -> str:
+        # 1) деп-линк: приложение само откроет «Мою волну» и начнёт играть
+        scheme = self.music_uri.split("://", 1)[0] if self.music_uri else ""
+        if scheme and actions.uri_scheme_exists(scheme):
+            actions.run_spec(("uri", self.music_uri))
+            # подстраховка: если через wait сек не играет — жмём play её сессии
+            threading.Timer(self.music_wait, actions.ensure_music_playing).start()
+            return "Включаю Мою волну."
+        # 2) нет протокола — запускаем плеер свёрнуто и доигрываем сессией
         hit = find_installed(self.installed, self.music_app)
         if hit:
             name, lnk = hit
             actions.open_path(lnk, minimized=True)
-            # даём плееру запуститься и жмём play — обычно стартует «Моя волна»
-            threading.Timer(self.music_wait, actions.media_key, args=("play",)).start()
+            threading.Timer(self.music_wait, actions.ensure_music_playing).start()
             return "Включаю музыку."
         actions.open_url("https://music.yandex.ru/personal/my-wave")
         return "Плеер не найден, открываю Мою волну в браузере."

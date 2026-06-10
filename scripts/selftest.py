@@ -211,11 +211,40 @@ def main() -> None:
     print(f"[{'OK' if ok else '!!'}] цепочка из трёх -> {chains}")
     failed += 0 if ok else 1
 
+    chains = handler._split_chain(normalize("сделай и открой скриншот"))
+    ok = len(chains) == 1
+    print(f"[{'OK' if ok else '!!'}] цепочка: «сделай и открой скриншот» не делится -> {chains}")
+    failed += 0 if ok else 1
+
     # «открой его» без последнего файла — безопасный ответ, ничего не открывает
     reply = handler._do_open("его")
     ok = "нечего" in reply
     print(f"[{'OK' if ok else '!!'}] местоимение без файла -> {reply!r}")
     failed += 0 if ok else 1
+
+    # Маршрутизация медиа-команд (media_key подменён, клавиши не жмутся)
+    from jarvis import actions as A
+    pressed = []
+    orig_mk = A.media_key
+    A.media_key = lambda name, times=1: (pressed.append(name), True)[1]
+    try:
+        for q, exp_key in [("поставь паузу", "play"), ("поставь музыку на паузу", "play"),
+                           ("выключи музыку", "play"), ("следующий трек", "next"),
+                           ("сделай потише", "vol_down")]:
+            pressed.clear()
+            r = handler._media(normalize(q))
+            ok = pressed == [exp_key] and bool(r)
+            print(f"[{'OK' if ok else '!!'}] медиа: {q!r} -> клавиша {pressed}, ответ {r!r}")
+            failed += 0 if ok else 1
+        # «включи доту» — не медиа-команда
+        ok = handler._media(normalize("включи доту")) is None
+        print(f"[{'OK' if ok else '!!'}] медиа: «включи доту» не перехватывается")
+        failed += 0 if ok else 1
+    finally:
+        A.media_key = orig_mk
+
+    from jarvis.actions import uri_scheme_exists
+    print(f"[..] протокол yandexmusic:// -> {uri_scheme_exists('yandexmusic')}")
 
     # LLM-фолбэк (если Ollama доступна) — только разбор, без выполнения
     from jarvis.brain import Brain
