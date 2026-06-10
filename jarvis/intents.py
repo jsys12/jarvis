@@ -23,7 +23,9 @@ def _is_open_verb(tok: str) -> bool:
 
 def _is_close_verb(tok: str) -> bool:
     return any(tok.startswith(s) for s in CLOSE_STEMS)
-FILLER = {"пожалуйста", "мне", "ка", "давай", "быстро", "срочно", "будь", "добр"}
+FILLER = {"пожалуйста", "мне", "ка", "давай", "быстро", "срочно", "будь", "добр",
+          # предлоги, союзы и огрызки распознавания — в цели команды они только мешают
+          "в", "на", "и", "а", "но", "ну", "от", "до", "же", "бы", "то", "это", "там"}
 CANCEL = {"отмена", "стоп", "ничего", "забудь", "отбой"}
 
 SITES = {
@@ -85,6 +87,19 @@ def parse_search(cmd: str):
     return (*ENGINES["гугл"], rest)
 
 
+def parse_engine_tail(cmd: str):
+    """Движок в середине фразы с хвостом-запросом: «открой на ютубе видео котиков»
+    -> поиск на Ютубе «видео котиков». Срабатывает даже на огрызках распознавания."""
+    tokens = cmd.split()
+    for i, tok in enumerate(tokens):
+        engine = _engine_in(tok)
+        if engine and i + 1 < len(tokens):
+            query = " ".join(t for t in tokens[i + 1:] if t not in FILLER)
+            if query:
+                return (*engine, query)
+    return None
+
+
 def normalize(text: str) -> str:
     text = text.lower().replace("ё", "е")
     text = re.sub(r"[^\w\s]", " ", text)
@@ -117,7 +132,7 @@ class IntentHandler:
 
         # Поиск с запросом — раньше глаголов, чтобы сработало
         # «открой гугл с поиском погода» и «найди на ютубе лофи»
-        search = parse_search(cmd)
+        search = parse_search(cmd) or parse_engine_tail(cmd)
         if search:
             engine, where, query = search
             actions.open_search(engine, query)

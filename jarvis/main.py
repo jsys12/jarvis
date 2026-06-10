@@ -22,12 +22,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 class Jarvis:
     def __init__(self, config: dict, listener: Listener, speaker: Speaker,
-                 handler: IntentHandler, base_dir: Path):
+                 handler: IntentHandler, base_dir: Path, whisper=None):
         self.config = config
         self.listener = listener
         self.speaker = speaker
         self.handler = handler
         self.base_dir = base_dir
+        self.whisper = whisper
         self.listening_enabled = True
         self.stop_event = threading.Event()
         self._awaiting_until = 0.0
@@ -48,18 +49,19 @@ class Jarvis:
 
     def run_loop(self) -> None:
         try:
-            for phrase in self.listener.phrases(self.stop_event):
+            for phrase, audio in self.listener.phrases(self.stop_event):
                 if not self.listening_enabled:
                     continue
                 try:
-                    self._process(phrase)
+                    self._process(phrase, audio)
                 except Exception:
                     log.exception("Ошибка обработки фразы %r", phrase)
         except Exception:
             log.exception("Аудиопоток упал")
             self.say("Проблема с микрофоном. Проверьте журнал.")
 
-    def _process(self, phrase: str) -> None:
+    def _process(self, phrase: str, audio: bytes) -> None:
+        awaiting = time.time() < self._awaiting_until
         cmd = self._extract_command(normalize(phrase))
         if cmd is None:
             return  # обращались не к нам
@@ -68,8 +70,34 @@ class Jarvis:
             self.say("Слушаю.")
             self._awaiting_until = time.time() + self.config["command_window_sec"]
             return
+        # Vosk разбудил — точную расшифровку команды даёт Whisper
+        if self.whisper is not None and audio:
+            refined = self._refine(audio, awaiting)
+            if refined:
+                cmd = refined
         self._awaiting_until = 0.0
         self.say(self.handler.handle(cmd))
+
+    def _refine(self, audio: bytes, awaiting: bool) -> str | None:
+        """Пере-распознаёт фразу Whisper'ом и убирает из неё wake-слово."""
+        try:
+            text = normalize(self.whisper.transcribe(audio))
+        except Exception:
+            log.exception("Whisper не справился, использую текст Vosk")
+            return None
+        if not text:
+            return None
+        tokens = text.split()
+        for i, tok in enumerate(tokens):
+            if self._is_wake(tok):
+                return " ".join(tokens[i + 1:])
+        if awaiting:
+            return text  # окно после «Слушаю» — wake-слова и не должно быть
+        # Vosk слышал wake-слово, а Whisper расслышал его иначе —
+        # отбрасываем первый токен, если он похож на огрызок имени
+        if tokens and SequenceMatcher(None, tokens[0], self._wake_words[0]).ratio() >= 0.5:
+            return " ".join(tokens[1:])
+        return text
 
     def _extract_command(self, text: str) -> str | None:
         """Команда после wake-слова, '' если только wake-слово, None если его нет."""
@@ -105,10 +133,20 @@ def main() -> None:
     config = load_config(BASE_DIR)
     model_dir = ensure_model(BASE_DIR / "models")
 
+    # Whisper грузим строго до первого использования WinRT (см. WhisperTranscriber)
+    whisper = None
+    if config.get("use_whisper", True):
+        try:
+            from jarvis.stt import WhisperTranscriber
+
+            whisper = WhisperTranscriber(config.get("whisper_model", "small"))
+        except Exception:
+            log.exception("Whisper не завёлся, работаю только на Vosk")
+
     speaker = Speaker(config["voice"])
     listener = Listener(model_dir, config["sample_rate"], config.get("input_device"))
     handler = IntentHandler(config, build_apps(config))
-    jarvis = Jarvis(config, listener, speaker, handler, BASE_DIR)
+    jarvis = Jarvis(config, listener, speaker, handler, BASE_DIR, whisper)
 
     worker = threading.Thread(target=jarvis.run_loop, daemon=True, name="jarvis-listener")
     worker.start()

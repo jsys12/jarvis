@@ -115,9 +115,15 @@ def spoken_domain(spoken: str) -> str | None:
 
 
 def guess_site(spoken: str) -> str | None:
-    """Пробует превратить «хабр» в живой домен: habr.ru / habr.com / ..."""
+    """Пробует превратить «хабр» в живой домен: habr.ru / habr.com / ...
+
+    Только короткие цели: длинная фраза — это почти наверняка ошибка
+    распознавания, а паркинг-DNS «отвечает» на любую абракадабру.
+    """
+    if len(spoken.split()) > 2:
+        return None
     base = translit(spoken.replace(" ", "").replace("-", ""))
-    if not re.fullmatch(r"[a-z0-9]{2,30}", base):
+    if not re.fullmatch(r"[a-z0-9]{2,14}", base):
         return None
     for tld in (".ru", ".com", ".net", ".org", ".io"):
         host = base + tld

@@ -18,7 +18,7 @@ from vosk import KaldiRecognizer, Model, SetLogLevel  # noqa: E402
 from jarvis.apps import build_apps, find_app  # noqa: E402
 from jarvis.installed import find_installed, scan_start_menu  # noqa: E402
 from jarvis.intents import (IntentHandler, _is_close_verb, _is_open_verb,  # noqa: E402
-                            normalize, parse_search)
+                            normalize, parse_engine_tail, parse_search)
 from jarvis.matching import match_score  # noqa: E402
 from jarvis.actions import find_process, spoken_domain  # noqa: E402
 from jarvis.tts import Speaker  # noqa: E402
@@ -44,6 +44,9 @@ def recognize(model: Model, wav_bytes: bytes) -> str:
 
 def main() -> None:
     SetLogLevel(-1)
+    # Whisper — строго до первого использования WinRT (иначе access violation)
+    from jarvis.stt import WhisperTranscriber
+    whisper = WhisperTranscriber("small")
     speaker = Speaker("Pavel")
     assert speaker._mode == "winrt", "Pavel/WinRT недоступен"
     model = Model(str(BASE / "models" / "vosk-model-small-ru-0.22"))
@@ -105,11 +108,39 @@ def main() -> None:
         print(f"[{'OK' if ok else '!!'}] транслит: {spoken!r} ~ {candidate!r} = {score:.2f}")
         failed += 0 if ok else 1
 
+    # Движок в середине фразы + защита от мусорных доменов
+    res = parse_engine_tail(normalize("открой на ютубе видео котиков"))
+    ok = res is not None and res[0] == "youtube" and res[2] == "видео котиков"
+    print(f"[{'OK' if ok else '!!'}] хвост: 'открой на ютубе видео котиков' -> {res}")
+    failed += 0 if ok else 1
+    res = parse_engine_tail(normalize("от к но ютубе видео котиков"))  # каша из лога
+    ok = res is not None and res[0] == "youtube"
+    print(f"[{'OK' if ok else '!!'}] хвост (каша vosk): -> {res}")
+    failed += 0 if ok else 1
+    from jarvis.actions import guess_site
+    bad = guess_site("от к но ютубе видео котиков")
+    ok = bad is None
+    print(f"[{'OK' if ok else '!!'}] мусорный домен не угадывается -> {bad}")
+    failed += 0 if ok else 1
+
     # Продиктованный домен
     dom = spoken_domain("хабр точка ру")
     ok = dom == "https://habr.ru"
     print(f"[{'OK' if ok else '!!'}] домен: 'хабр точка ру' -> {dom}")
     failed += 0 if ok else 1
+
+    # Whisper: точная расшифровка фразы, на которой Vosk ошибался
+    import time as _t
+    for phrase in ["джарвис открой на ютубе видео котиков", "джарвис открой дискорд"]:
+        wav_bytes = asyncio.run(speaker._synthesize(phrase))
+        wf = wave.open(io.BytesIO(wav_bytes))
+        pcm = wf.readframes(wf.getnframes())
+        t0 = _t.time()
+        heard = normalize(whisper.transcribe(pcm, wf.getframerate()))
+        dt = _t.time() - t0
+        ok = any(w in heard for w in ("ютуб", "дискорд", "discord"))
+        print(f"[{'OK' if ok else '!!'}] whisper ({dt:.1f}с): {phrase!r} -> {heard!r}")
+        failed += 0 if ok else 1
 
     # Живой индекс меню «Пуск» и процессы (информативно, зависит от машины)
     index = scan_start_menu()

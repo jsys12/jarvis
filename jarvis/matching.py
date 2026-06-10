@@ -34,15 +34,18 @@ def match_score(spoken: str, candidate: str) -> float:
     if not spoken or not cand:
         return 0.0
     best = 0.0
+    # Whisper может выдать латиницу («открой discord»), псевдонимы бывают
+    # кириллицей — поэтому транслитерируем обе стороны
     for s in {spoken, translit(spoken)}:
-        if s == cand:
-            return 1.0
-        if len(s) >= 3 and (s in cand or cand in s):
-            best = max(best, 0.9)
-        best = max(best, SequenceMatcher(None, s, cand).ratio())
-        best = max(best, SequenceMatcher(None, s.replace(" ", ""), cand.replace(" ", "")).ratio())
-        for word in cand.split():
-            best = max(best, SequenceMatcher(None, s, word).ratio())
+        for c in {cand, translit(cand)}:
+            if s == c:
+                return 1.0
+            if len(s) >= 3 and (s in c or c in s):
+                best = max(best, 0.9)
+            best = max(best, SequenceMatcher(None, s, c).ratio())
+            best = max(best, SequenceMatcher(None, s.replace(" ", ""), c.replace(" ", "")).ratio())
+            for word in c.split():
+                best = max(best, SequenceMatcher(None, s, word).ratio())
     sk_s, sk_c = _skeleton(spoken), _skeleton(cand)
     if len(sk_s) >= 3 and sk_s == sk_c:
         best = max(best, 0.8)

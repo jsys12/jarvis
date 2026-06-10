@@ -15,6 +15,10 @@ DEFAULT_CONFIG = {
     "input_device": None,
     # Сколько секунд ждать команду после отклика «Слушаю»
     "command_window_sec": 8,
+    # Whisper уточняет команду после wake-слова (точнее, но ест ~600 МБ ОЗУ).
+    # Модели: tiny / base / small (рекомендуется) / medium
+    "use_whisper": True,
+    "whisper_model": "small",
     # Переопределение путей встроенных приложений: {"discord": "C:\\...\\Discord.exe"}
     "app_paths": {},
     # Свои команды: фразы -> действие (путь к exe, ссылка или steam-URI)

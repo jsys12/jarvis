@@ -1,8 +1,10 @@
 # Джарвис
 
-Локальный голосовой ассистент для Windows. Полностью офлайн: распознавание русской речи —
-нейросетевая модель [Vosk](https://alphacephei.com/vosk/) (`vosk-model-small-ru`, ~45 МБ),
-синтез — системный мужской голос Microsoft Pavel (WinRT/OneCore). Живёт в системном трее.
+Локальный голосовой ассистент для Windows. Полностью офлайн, гибридное распознавание:
+[Vosk](https://alphacephei.com/vosk/) (`vosk-model-small-ru`, ~45 МБ) непрерывно слушает
+и ловит wake-слово, а команду точно расшифровывает **Whisper** (faster-whisper `small`,
+int8, CPU, ~460 МБ). Синтез — системный мужской голос Microsoft Pavel (WinRT/OneCore).
+Живёт в системном трее.
 
 ## Возможности
 
@@ -66,9 +68,16 @@ python -m jarvis
 
 | Компонент | Решение |
 |---|---|
-| Распознавание речи | Vosk (Kaldi), модель `vosk-model-small-ru-0.22` |
+| Wake-слово (стриминг) | Vosk (Kaldi), модель `vosk-model-small-ru-0.22` |
+| Расшифровка команды | faster-whisper (CTranslate2, int8, CPU), модель `small`; отключается `use_whisper: false` |
 | Синтез речи | WinRT `Windows.Media.SpeechSynthesis`, голос Microsoft Pavel; фолбэк — SAPI/Ирина |
 | Микрофон | sounddevice (PortAudio) |
 | Трей | pystray + Pillow |
 
-Всё работает локально, интернет нужен только для первого скачивания модели.
+Всё работает локально, интернет нужен только для первого скачивания моделей.
+Whisper точнее на порядок (Vosk «открой на ютубе видео котиков» слышит как кашу,
+Whisper — дословно), стоит ~600 МБ ОЗУ и ~2 секунды на команду. На слабой машине
+можно поставить `"whisper_model": "base"` или выключить совсем.
+
+Важно для разработчиков: модель Whisper (CTranslate2) должна загружаться **до**
+первого вызова WinRT-синтеза, иначе процесс падает с access violation.

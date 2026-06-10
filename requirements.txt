@@ -1,4 +1,5 @@
 vosk>=0.3.45
+faster-whisper>=1.2
 sounddevice>=0.5
 pystray>=0.19
 Pillow>=10
