@@ -82,6 +82,10 @@ class Jarvis:
                 cmd = refined
         self._awaiting_until = 0.0
         self.say(self.handler.handle(cmd))
+        # после разговорного ответа ждём реплику без wake-слова — живой диалог
+        if getattr(self.handler, "last_was_chat", False):
+            self._awaiting_until = time.time() + float(
+                self.config.get("dialog_window_sec", 8))
 
     def _refine(self, audio: bytes, awaiting: bool):
         """Пере-распознаёт фразу Whisper'ом и убирает из неё wake-слово.

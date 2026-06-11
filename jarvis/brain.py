@@ -17,8 +17,12 @@ log = logging.getLogger("jarvis.brain")
 SYSTEM = """Ты разбираешь команды голосового ассистента на Windows. Отвечай ТОЛЬКО JSON.
 Действия: open_app (открыть программу или игру; поле minimized=true — свёрнуто), close_app, open_site (открыть сайт), search (поиск), screenshot, open_file (открыть последний созданный файл), media_key (key: play|next|prev|vol_up|vol_down|mute), wait (seconds), answer (короткий ответ на вопрос), none (бессмыслица).
 Поля: action; target — название программы или домен сайта; query — поисковый запрос; engine — google|youtube|wiki; reply — ответ для answer.
+Ещё действия: open_folder (открыть папку), list_folder (что лежит в папке), create_file (создать файл: target — имя, folder — папка).
 Если команд несколько — верни {"steps":[...]} со списком действий по порядку.
 Примеры:
+открой загрузки -> {"action":"open_folder","target":"загрузки"}
+что лежит на рабочем столе -> {"action":"list_folder","target":"рабочий стол"}
+создай файл план тренировок в документах -> {"action":"create_file","target":"план тренировок","folder":"документы"}
 открой стим -> {"action":"open_app","target":"стим"}
 запусти сабнатику -> {"action":"open_app","target":"сабнатика"}
 открой порно хаб -> {"action":"open_site","target":"pornhub.com"}
@@ -30,7 +34,15 @@ SYSTEM = """Ты разбираешь команды голосового асс
 открой стим и сделай потише -> {"steps":[{"action":"open_app","target":"стим"},{"action":"media_key","key":"vol_down","times":5}]}"""
 
 ACTIONS = {"open_app", "close_app", "open_site", "search", "screenshot",
-           "open_file", "media_key", "wait", "answer", "none"}
+           "open_file", "media_key", "wait", "answer", "none",
+           "open_folder", "list_folder", "create_file"}
+
+CHAT_SYSTEM = (
+    "Ты — Феникс, локальный голосовой ассистент на Windows. Характер: спокойный, "
+    "вежливый, слегка ироничный, обращаешься к пользователю «сэр». "
+    "Отвечай КРАТКО — одно-три предложения, разговорным языком, без списков, "
+    "без markdown и эмодзи: твой ответ озвучивается вслух."
+)
 
 
 class Brain:
@@ -66,20 +78,42 @@ class Brain:
                 return True
         return False
 
-    def _chat(self, cmd: str, timeout: float):
-        body = json.dumps({
+    def _request(self, messages: list, timeout: float, fmt: str | None = "json",
+                 temperature: float = 0, num_predict: int = 120) -> str:
+        payload = {
             "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM},
-                         {"role": "user", "content": cmd}],
+            "messages": messages,
             "stream": False,
-            "format": "json",
             "keep_alive": -1,  # держим модель в VRAM, иначе каждый раз ~десятки секунд загрузки
-            "options": {"temperature": 0, "num_predict": 120},
-        }).encode()
-        req = urllib.request.Request(self.url + "/api/chat", body,
+            "options": {"temperature": temperature, "num_predict": num_predict},
+        }
+        if fmt:
+            payload["format"] = fmt
+        req = urllib.request.Request(self.url + "/api/chat", json.dumps(payload).encode(),
                                      {"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read())["message"]["content"]
+
+    def _chat(self, cmd: str, timeout: float):
+        return self._request([{"role": "system", "content": SYSTEM},
+                              {"role": "user", "content": cmd}], timeout)
+
+    def chat(self, cmd: str, history: list | None = None) -> str | None:
+        """Разговорный ответ с учётом истории диалога (озвучивается как есть)."""
+        if not self.available:
+            return None
+        msgs = ([{"role": "system", "content": CHAT_SYSTEM}]
+                + list(history or [])[-10:]
+                + [{"role": "user", "content": cmd}])
+        try:
+            t0 = time.time()
+            text = self._request(msgs, self.timeout, fmt=None,
+                                 temperature=0.5, num_predict=180).strip()
+            log.info("LLM-диалог (%.2f с): %r -> %r", time.time() - t0, cmd, text)
+            return text or None
+        except Exception:
+            log.exception("LLM-диалог не удался")
+            return None
 
     def _warmup(self) -> None:
         try:

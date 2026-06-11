@@ -11,8 +11,11 @@ DEFAULT_CONFIG = {
     # Подбор нового имени: python scripts/wakebench.py
     "wake_words": ["феникс", "финикс", "феникса", "fenix", "phoenix",
                    "джарвис", "jarvis"],
-    # Синтез речи: piper (нейроголос, рекомендуется) / winrt (Pavel) / sapi
-    "tts_backend": "piper",
+    # Синтез речи: auto (клон голоса из voices/jarvis.wav, если файл есть,
+    # иначе piper) / xtts / piper / winrt / sapi
+    "tts_backend": "auto",
+    # Референс для клонирования (XTTS-v2): 10-30 с чистой речи без музыки
+    "xtts_ref": "voices/jarvis.wav",
     # Голоса piper: ruslan (чёткий) / dmitri (глубже); сэмплы — scripts/voicedemo.py
     "tts_voice": "ruslan",
     # Скорость дикции: 1.0 — обычная, 1.15 — слегка быстрее
@@ -35,11 +38,12 @@ DEFAULT_CONFIG = {
     "use_llm": True,
     "llm_model": "qwen2.5:1.5b-instruct",
     "ollama_url": "http://127.0.0.1:11434",
-    # «Включи музыку»: сначала пробуем деп-линк (Яндекс Музыка сама включит
-    # «Мою волну»), иначе плеер из меню «Пуск» + play его медиа-сессии
+    # «Включи музыку»: запущенному плееру жмётся play (медиа-сессия),
+    # иначе плеер из меню «Пуск» запускается и сворачивается после старта
     "music_app": "яндекс музыка",
-    "music_uri": "yandexmusic://radio/user:onyourwave",
     "music_wait_sec": 6,
+    # Сколько секунд после разговорного ответа слушать без wake-слова
+    "dialog_window_sec": 8,
     # Переопределение путей встроенных приложений: {"discord": "C:\\...\\Discord.exe"}
     "app_paths": {},
     # Свои команды: фразы -> действие (путь к exe, ссылка или steam-URI)

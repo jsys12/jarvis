@@ -6,9 +6,11 @@ import random
 import re
 import threading
 import time
+from collections import deque
 from difflib import SequenceMatcher
+from pathlib import Path
 
-from jarvis import APP_NAME, __version__, actions
+from jarvis import APP_NAME, __version__, actions, files
 from jarvis.apps import find_app
 from jarvis.installed import find_installed, scan_start_menu
 from jarvis.steam import find_game, scan_steam_games
@@ -129,9 +131,11 @@ class IntentHandler:
         self.installed = scan_start_menu()
         self.steam_games = scan_steam_games()
         self.music_app = config.get("music_app", "яндекс музыка")
-        self.music_uri = config.get("music_uri", "yandexmusic://radio/user:onyourwave")
         self.music_wait = float(config.get("music_wait_sec", 6))
-        self.last_file = None  # последний созданный файл — для «открой его»
+        self.last_file = None    # последний созданный файл — для «открой его»
+        self.last_folder = None  # последняя папка — для «что в ней»
+        self.dialog = deque(maxlen=12)  # история диалога для LLM
+        self.last_was_chat = False
         self.custom = []
         for entry in config.get("custom_commands", []):
             phrases = [normalize(p) for p in entry.get("phrases", []) if p.strip()]
@@ -143,7 +147,7 @@ class IntentHandler:
 
     _CHAIN_SEP = re.compile(r"\s+(?:а\s+)?(?:и|потом|затем|после этого)\s+")
     _CHAIN_STARTERS = {"сделай", "сними", "найди", "поищи", "загугли", "погугли",
-                       "скажи", "поставь", "переключи", "покажи"}
+                       "скажи", "поставь", "переключи", "покажи", "создай", "посмотри"}
     # односложные команды, которым позволено быть отдельным шагом цепочки
     _CHAIN_SINGLES = {"пауза", "плей", "стоп", "скриншот", "громче", "тише",
                       "погромче", "потише", "дальше"}
@@ -167,12 +171,18 @@ class IntentHandler:
 
     def handle(self, cmd: str) -> str:
         """Принимает нормализованную команду, возвращает ответ для озвучки."""
+        self.last_was_chat = False
         parts = self._split_chain(cmd)
         if len(parts) > 1:
             log.info("Цепочка из %d шагов: %s", len(parts), parts)
             replies = [self._handle_single(p) for p in parts]
-            return " ".join(r for r in replies if r)
-        return self._handle_single(cmd)
+            reply = " ".join(r for r in replies if r)
+        else:
+            reply = self._handle_single(cmd)
+        # история диалога — контекст для LLM («а во сколько это было?»)
+        self.dialog.append({"role": "user", "content": cmd})
+        self.dialog.append({"role": "assistant", "content": reply})
+        return reply
 
     def _handle_single(self, cmd: str) -> str:
         if cmd in CANCEL:
@@ -184,6 +194,11 @@ class IntentHandler:
 
         # Музыка и медиа-клавиши — до глаголов («включи музыку» это не open_app)
         reply = self._media(cmd)
+        if reply:
+            return reply
+
+        # Файлы и папки: создать, посмотреть содержимое
+        reply = self._files(cmd)
         if reply:
             return reply
 
@@ -226,13 +241,18 @@ class IntentHandler:
         # Правила не справились — спрашиваем локальную нейронку
         if self.brain is not None:
             intent = self.brain.parse(cmd)
-            if intent:
+            if intent and intent.get("action") not in ("answer", "none"):
                 if isinstance(intent.get("steps"), list):
                     reply = self._execute_steps(intent["steps"])
                 else:
                     reply = self._execute_intent(intent)
                 if reply:
                     return reply
+            # не команда — обычный разговор с памятью диалога
+            text = self.brain.chat(cmd, list(self.dialog))
+            if text:
+                self.last_was_chat = True
+                return text
         return "Я не понял команду. Скажите, например: открой стим."
 
     def _execute_steps(self, steps: list) -> str | None:
@@ -271,6 +291,25 @@ class IntentHandler:
             ok = actions.media_key(str(intent.get("key", "")),
                                    int(intent.get("times", 1) or 1))
             return "Готово." if ok else None
+        if action == "open_folder" and target:
+            folder = files.resolve_folder(target, explicit=True)
+            if folder:
+                self.last_folder = folder
+                files.open_folder(folder)
+                return f"Открываю папку {folder.name}."
+            return None
+        if action == "list_folder":
+            folder = files.resolve_folder(target, explicit=True) if target else self.last_folder
+            if folder:
+                self.last_folder = folder
+                return files.describe_folder(folder)
+            return None
+        if action == "create_file":
+            folder = files.resolve_folder(str(intent.get("folder") or ""), explicit=True) \
+                or Path.home() / "Desktop"
+            path = files.create_file(folder, target or "новый файл")
+            self.last_file = path
+            return f"Создал {path.name} {self._folder_title(folder)}."
         if action == "close_app" and target:
             return self._do_close(target)
         if action == "open_site" and (target or query):
@@ -335,19 +374,20 @@ class IntentHandler:
         return None
 
     def _music_on(self) -> str:
-        # 1) деп-линк: приложение само откроет «Мою волну» и начнёт играть
-        scheme = self.music_uri.split("://", 1)[0] if self.music_uri else ""
-        if scheme and actions.uri_scheme_exists(scheme):
-            actions.run_spec(("uri", self.music_uri))
-            # подстраховка: если через wait сек не играет — жмём play её сессии
-            threading.Timer(self.music_wait, actions.ensure_music_playing).start()
-            return "Включаю Мою волну."
-        # 2) нет протокола — запускаем плеер свёрнуто и доигрываем сессией
+        # Плеер уже запущен — просто включаем воспроизведение его сессии
+        # (повторный запуск/деп-линк рисует чёрный экран у Electron-приложений)
+        if actions.find_process(self.music_app, threshold=0.8):
+            actions.ensure_music_playing()
+            return "Включаю."
+        # Запускаем обычным окном (start /min ломает рендер у Electron),
+        # после старта воспроизведения сворачиваем окно сами
         hit = find_installed(self.installed, self.music_app)
         if hit:
             name, lnk = hit
-            actions.open_path(lnk, minimized=True)
+            actions.open_path(lnk)
             threading.Timer(self.music_wait, actions.ensure_music_playing).start()
+            threading.Timer(self.music_wait + 3,
+                            actions.minimize_window, args=(name,)).start()
             return "Включаю музыку."
         actions.open_url("https://music.yandex.ru/personal/my-wave")
         return "Плеер не найден, открываю Мою волну в браузере."
@@ -357,6 +397,57 @@ class IntentHandler:
             actions.open_path(self.last_file)
             return "Открываю."
         return "Пока нечего открывать."
+
+    # --- файлы и папки ----------------------------------------------------
+
+    _FOLDER_TITLES = {"Desktop": "на рабочем столе", "Downloads": "в загрузках",
+                      "Documents": "в документах", "Pictures": "в изображениях",
+                      "Music": "в музыке", "Videos": "в видео",
+                      "Screenshots": "в скриншотах"}
+
+    def _folder_title(self, path: Path) -> str:
+        return self._FOLDER_TITLES.get(path.name, f"в папке {path.name}")
+
+    def _files(self, cmd: str) -> str | None:
+        # «создай файл список покупок на рабочем столе» / «создай папку проекты»
+        m = re.match(r"^созда\w*\s+(файл|папку|документ|заметку)\s*(.*)$", cmd)
+        if m:
+            kind, rest = m.group(1), m.group(2)
+            folder = files.resolve_folder(rest, explicit=True) or Path.home() / "Desktop"
+            ext = ".txt"
+            name_tokens = []
+            for t in rest.split():
+                if t in {"в", "на", "папке", "папку", "моем", "новый", "новую"}:
+                    continue
+                if files.resolve_folder(t, explicit=True):
+                    continue
+                hit_ext = next((e for s, e in files._EXT_WORDS.items() if t.startswith(s)), None)
+                if hit_ext and kind in ("файл", "документ"):
+                    ext = hit_ext
+                    continue
+                name_tokens.append(t)
+            name = " ".join(name_tokens)
+            if kind == "папку":
+                path = files.create_folder(folder, name or "новая папка")
+                self.last_folder = path
+            else:
+                if kind == "заметку":
+                    name = name or "заметка"
+                path = files.create_file(folder, name or "новый файл", ext)
+                self.last_file = path
+            return f"Создал {path.name} {self._folder_title(folder)}."
+
+        # «что в папке загрузки» / «что лежит на рабочем столе» / «что в ней»
+        if re.match(r"^(что|чего)\s+(лежит\s+|есть\s+|находится\s+)?(в|на|внутри|там)", cmd) \
+                or "содержимое" in cmd:
+            if re.search(r"в ней|в нем|там|внутри$", cmd) and self.last_folder:
+                return files.describe_folder(self.last_folder)
+            folder = files.resolve_folder(cmd, explicit=True)
+            if folder:
+                self.last_folder = folder
+                return files.describe_folder(folder)
+            return "Какую папку посмотреть?"
+        return None
 
     def _do_open(self, target: str) -> str:
         if not target:
@@ -395,6 +486,13 @@ class IntentHandler:
             if key in target.split() or target == key:
                 actions.open_url(url)
                 return f"Открываю {title}."
+
+        # 2.5. Папки пользователя («открой загрузки», «открой папку музыка»)
+        folder = files.resolve_folder(target, explicit="папк" in target)
+        if folder:
+            self.last_folder = folder
+            files.open_folder(folder)
+            return f"Открываю папку {folder.name}."
 
         # 3. Игры из библиотеки Steam («запусти сабнатику»)
         game = find_game(self.steam_games, target)

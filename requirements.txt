@@ -1,6 +1,9 @@
 vosk>=0.3.45
 faster-whisper>=1.2
 piper-tts>=1.3
+# Клонирование голоса (опционально, тяжёлое: torch cu124 + XTTS-v2 ~2 ГБ):
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+# pip install coqui-tts "transformers<5"
 # Для GPU (NVIDIA): CUDA-библиотеки ставятся pip'ом, системная CUDA не нужна.
 # На машине без NVIDIA эти две строки можно удалить — Whisper уйдёт на CPU.
 nvidia-cublas-cu12

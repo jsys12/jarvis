@@ -1,23 +1,28 @@
 """Синтез речи.
 
 Бэкенды по приоритету:
-1. piper — локальный нейро-TTS (ONNX, CPU, ~0.2 с), голоса ru_RU dmitri/ruslan;
-2. winrt — системный OneCore-голос Microsoft Pavel (его нет в классическом SAPI);
-3. sapi — pyttsx3/Ирина, аварийный.
+1. xtts — клонирование голоса (XTTS-v2, GPU, ~2-4 с): кладёте референс
+   voices/jarvis.wav (10-30 с чистой речи) — Феникс говорит этим голосом;
+2. piper — локальный нейро-TTS (ONNX, CPU, ~0.2 с), голоса ru_RU dmitri/ruslan;
+3. winrt — системный OneCore-голос Microsoft Pavel (его нет в классическом SAPI);
+4. sapi — pyttsx3/Ирина, аварийный.
 
-Скорость дикции: voice_rate (1.0 = обычная). Для piper это 1/length_scale,
-для WinRT — SpeechSynthesizerOptions.SpeakingRate.
+tts_backend: "auto" (xtts при наличии референса, иначе piper) / xtts / piper / winrt.
+Скорость дикции: voice_rate (1.0 = обычная).
 """
 
 import asyncio
 import io
 import logging
+import os
 import wave
 import winsound
+from pathlib import Path
 
 log = logging.getLogger("jarvis.tts")
 
 PIPER_REPO = "rhasspy/piper-voices"
+BASE_DIR = Path(__file__).resolve().parent.parent
 
 
 class Speaker:
@@ -28,7 +33,17 @@ class Speaker:
         self._mode = None
         self._engine = None
 
-        if cfg.get("tts_backend", "piper") == "piper":
+        backend = cfg.get("tts_backend", "auto")
+        ref = BASE_DIR / cfg.get("xtts_ref", "voices/jarvis.wav")
+        if backend in ("auto", "xtts"):
+            if ref.exists():
+                try:
+                    self._init_xtts(ref)
+                except Exception:
+                    log.exception("XTTS не завёлся, переключаюсь на piper")
+            elif backend == "xtts":
+                log.warning("Референс голоса не найден: %s — переключаюсь на piper", ref)
+        if self._mode is None and backend in ("auto", "xtts", "piper"):
             try:
                 self._init_piper(cfg.get("tts_voice", "ruslan"))
             except Exception:
@@ -43,6 +58,34 @@ class Speaker:
             except Exception:
                 log.exception("WinRT недоступен, переключаюсь на SAPI (pyttsx3)")
                 self._init_sapi()
+
+    # --- xtts (клонирование голоса) --------------------------------------
+
+    def _init_xtts(self, ref: Path) -> None:
+        os.environ.setdefault("COQUI_TOS_AGREED", "1")
+        import torch
+        from TTS.api import TTS as CoquiTTS
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        log.info("Загрузка XTTS-v2 на %s (это десятки секунд)...", device)
+        self._xtts = CoquiTTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)
+        self._xtts_ref = str(ref)
+        self._mode = "xtts"
+        log.info("TTS: XTTS-v2, клон голоса из %s", ref.name)
+
+    def _speak_xtts(self, text: str) -> None:
+        import numpy as np
+
+        samples = self._xtts.tts(text=text, speaker_wav=self._xtts_ref,
+                                 language="ru", speed=self.rate)
+        pcm = (np.clip(np.asarray(samples), -1, 1) * 32767).astype(np.int16)
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(24000)
+            wf.writeframes(pcm.tobytes())
+        winsound.PlaySound(buf.getvalue(), winsound.SND_MEMORY)
 
     # --- piper ---------------------------------------------------------
 
@@ -107,7 +150,9 @@ class Speaker:
             return
         log.info("Говорю: %s", text)
         try:
-            if self._mode == "piper":
+            if self._mode == "xtts":
+                self._speak_xtts(text)
+            elif self._mode == "piper":
                 self._speak_piper(text)
             elif self._mode == "winrt":
                 wav = asyncio.run(self._synthesize(text))

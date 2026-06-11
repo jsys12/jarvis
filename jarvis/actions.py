@@ -65,6 +65,29 @@ def close_browser() -> bool:
     return any([kill_process(p) for p in BROWSER_PROCS])
 
 
+def minimize_window(title_part: str) -> bool:
+    """Сворачивает первое видимое окно, в заголовке которого есть подстрока."""
+    user32 = ctypes.windll.user32
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def _enum(hwnd, _):
+        if user32.IsWindowVisible(hwnd):
+            buf = ctypes.create_unicode_buffer(256)
+            user32.GetWindowTextW(hwnd, buf, 256)
+            if title_part.lower() in buf.value.lower():
+                found.append(hwnd)
+                return False
+        return True
+
+    user32.EnumWindows(_enum, 0)
+    if found:
+        user32.ShowWindow(found[0], 6)  # SW_MINIMIZE
+        log.info("Свернул окно с %r", title_part)
+        return True
+    return False
+
+
 def uri_scheme_exists(scheme: str) -> bool:
     """Зарегистрирован ли URL-протокол (yandexmusic:// и т.п.)."""
     import winreg

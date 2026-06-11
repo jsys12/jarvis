@@ -243,8 +243,26 @@ def main() -> None:
     finally:
         A.media_key = orig_mk
 
-    from jarvis.actions import uri_scheme_exists
-    print(f"[..] протокол yandexmusic:// -> {uri_scheme_exists('yandexmusic')}")
+    # Файлы и папки (только чтение, без создания)
+    from jarvis import files as F
+    for spoken, exp in [("загрузки", "Downloads"), ("на рабочем столе", "Desktop"),
+                        ("в документах", "Documents"), ("картинки", "Pictures")]:
+        f = F.resolve_folder(normalize(spoken))
+        ok = f is not None and f.name == exp
+        print(f"[{'OK' if ok else '!!'}] папка: {spoken!r} -> {f}")
+        failed += 0 if ok else 1
+    # «музыка» без слова «папка» — НЕ папка (это плеер)
+    ok = F.resolve_folder("музыку") is None and F.resolve_folder("музыку", explicit=True) is not None
+    print(f"[{'OK' if ok else '!!'}] папка «музыка» только со словом папка")
+    failed += 0 if ok else 1
+    desc = F.describe_folder(Path.home() / "Downloads")
+    ok = "файл" in desc or "папк" in desc or "пуст" in desc
+    print(f"[{'OK' if ok else '!!'}] содержимое загрузок -> {desc!r}")
+    failed += 0 if ok else 1
+    chains = handler._split_chain(normalize("создай файл заметки и открой его"))
+    ok = len(chains) == 2
+    print(f"[{'OK' if ok else '!!'}] цепочка: создай+открой -> {chains}")
+    failed += 0 if ok else 1
 
     # LLM-фолбэк (если Ollama доступна) — только разбор, без выполнения
     from jarvis.brain import Brain
@@ -262,6 +280,18 @@ def main() -> None:
             ok = intent is not None and check(intent)
             print(f"[{'OK' if ok else '!!'}] llm: {q!r} -> {intent}")
             failed += 0 if ok else 1
+        # разбор файловых команд
+        intent = brain.parse("создай файл список покупок в документах")
+        ok = intent is not None and intent.get("action") == "create_file"
+        print(f"[{'OK' if ok else '!!'}] llm: создание файла -> {intent}")
+        failed += 0 if ok else 1
+        # диалог с памятью
+        hist = [{"role": "user", "content": "запомни число сорок два"},
+                {"role": "assistant", "content": "Запомнил, сэр: сорок два."}]
+        answer = brain.chat("какое число я просил запомнить", hist)
+        ok = answer is not None and ("сорок два" in answer.lower() or "42" in answer)
+        print(f"[{'OK' if ok else '!!'}] llm-диалог с памятью -> {answer!r}")
+        failed += 0 if ok else 1
     else:
         print("[..] llm: Ollama недоступна, пропускаю")
 
